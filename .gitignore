@@ -1,0 +1,8 @@
+config_local.json
+data/
+__pycache__/
+_backup/
+*.bak
+*.tmp
+.idea/
+.venv/

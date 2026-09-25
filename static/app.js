@@ -1,0 +1,388 @@
+/* Flood real — หน้าเว็บ (อ่านจาก /api/data อย่างเดียว) */
+"use strict";
+
+const WL = {1:["น้อยวิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["น้ำมาก","#3b82f6"],5:["ล้นตลิ่ง","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
+const RAIN = {0:["ไม่มีฝน","#64748b"],1:["เล็กน้อย","#a5f3fc"],2:["ปานกลาง","#38bdf8"],3:["หนัก","#22c55e"],4:["หนักมาก","#f97316"]};
+const DAM = {1:["วิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["มาก","#3b82f6"],5:["เกินความจุ","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
+const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy"};
+const TF_COLOR = {"รอรับเรื่อง":"#ef4444","กำลังดำเนินการ":"#f59e0b","ส่งต่อ":"#a855f7","เสร็จสิ้น":"#22c55e"};
+function tfColor(st){ return TF_COLOR[st] || "#94a3b8"; }
+function tfOpen(it){ return !/เสร็จสิ้น|ยกเลิก|ไม่เกี่ยวข้อง/.test(it.state||""); }
+
+let DATA = null, map, layers = {}, satPeriod = "1day", satShown = "";
+const PERIOD_TH = {"1day":"ล่าสุด","3days":"3 วัน","7days":"7 วัน","30days":"30 วัน"};
+function satCur(){ const g=(DATA&&DATA.gistda)||{}; return (g.periods||{})[satPeriod] || null; }
+const $ = (s) => document.querySelector(s);
+
+function esc(v){ return String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function fmt(v, d=1){ return (v===null||v===undefined||isNaN(v)) ? "-" : Number(v).toLocaleString("th-TH",{maximumFractionDigits:d,minimumFractionDigits:0}); }
+function pill(tbl, lv){ const [t,c]=tbl[lv]||tbl[0]; return `<span class="pill" style="background:${c}">${esc(t)}</span>`; }
+function safeUrl(u){ return /^https?:\/\//i.test(u||"") ? esc(u) : "#"; }
+function q(){ return $("#q").value.trim().toLowerCase(); }
+function match(o, keys){ const s=q(); if(!s) return true; return keys.some(k => String(o[k]||"").toLowerCase().includes(s)); }
+function hasLL(o){ return typeof o.lat==="number" && typeof o.lon==="number" && Math.abs(o.lat)>0.1; }
+
+/* ---------------- โหลดข้อมูล ---------------- */
+async function load(){
+  try{
+    const r = await fetch("/api/data", {cache:"no-store"});
+    DATA = await r.json();
+    renderAll();
+  }catch(e){
+    $("#updated").textContent = "โหลดข้อมูลไม่ได้: " + e.message;
+  }
+}
+
+let satUserPicked = false;
+function prepSat(){
+  const per = ((DATA.gistda||{}).periods)||{};
+  if(!satUserPicked && !((per[satPeriod]||{}).count)){
+    const first = Object.keys(PERIOD_TH).find(k => (per[k]||{}).count > 0);
+    if(first) satPeriod = first;
+  }
+  document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>{
+    const c = (per[b.dataset.p]||{}).count;
+    b.textContent = PERIOD_TH[b.dataset.p] + (c!=null ? ` (${Number(c).toLocaleString("th-TH")})` : "");
+    b.classList.toggle("active", b.dataset.p===satPeriod);
+  });
+}
+
+function renderAll(){
+  if(!DATA) return;
+  try{ prepSat(); }catch(e){ console.error(e); }
+  $("#updated").textContent = DATA.updated_at ? "อัปเดต " + DATA.updated_at.replace("T"," ") : "ยังไม่มีข้อมูล (รอรอบแรก)";
+  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderSat, renderTraffy, renderFc]){
+    try{ f(); }catch(e){ console.error(f.name, e); }   // ส่วนไหนพัง ส่วนอื่นยังแสดง
+  }
+}
+
+function renderKpis(){
+  const wl = DATA.waterlevel||[], rain = DATA.rain||[], dams=(DATA.main||{}).dams||[];
+  const cur = satCur();
+  const k = [
+    ["red", wl.filter(w=>w.level===5).length, "สถานีน้ำล้นตลิ่ง"],
+    ["blue", wl.filter(w=>w.level===4).length, "สถานีน้ำมาก (>70%)"],
+    ["purple", rain.filter(r=>r.rain>90).length, "สถานีฝนหนักมาก (>90 มม.)"],
+    ["amber", dams.filter(d=>(d.pct||0)>80).length, "เขื่อนน้ำ >80%"],
+    ["", cur ? (cur.provinces||[]).length : "–", "จังหวัดมีน้ำท่วม (ดาวเทียม " + PERIOD_TH[satPeriod] + ")"],
+    ["", wl.length, "สถานีวัดระดับน้ำทั้งหมด"],
+    ["red", ((DATA.traffy||{}).items||[]).filter(tfOpen).length, `แจ้งน้ำท่วมขังค้าง (Traffy ${fmt((DATA.traffy||{}).hours||72,0)} ชม.)`],
+  ];
+  $("#kpis").innerHTML = k.map(([c,v,l])=>`<div class="kpi ${c}"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join("");
+}
+
+function renderStatus(){
+  const st = DATA.status||{};
+  $("#srcStatus").innerHTML = Object.keys(SRC_NAME).map(k=>{
+    const s = st[k]; const blk = DATA[k];
+    let cls="off", tip="ยังไม่ดึง";
+    if(s){ cls = s.ok ? "ok" : "bad"; tip = s.ok ? "ดึงได้ "+s.at : "ดึงไม่ได้: "+s.error; }
+    if((k==="gistda"||k==="tmd") && blk && blk.configured===false){ cls="off"; tip="ยังไม่ได้ใส่ API key"; }
+    return `<span class="src ${cls}" title="${esc(tip)}">${esc(SRC_NAME[k])}</span>`;
+  }).join("");
+}
+
+/* ---------------- แผนที่ ---------------- */
+function initMap(){
+  map = L.map("map", {preferCanvas:true}).setView([13.2, 101.0], 6);
+  setBase(basemap);
+  ["wl","rain","dam","sat","tf"].forEach(n => layers[n] = L.layerGroup());
+  $("#legend").innerHTML =
+    "<b>ระดับน้ำ:</b> " + [5,4,3,2,1].map(l=>`<span><i class="dot" style="background:${WL[l][1]}"></i>${WL[l][0]}</span>`).join(" ") +
+    " &nbsp; <b>ฝน:</b> " + [4,3,2,1].map(l=>`<span><i class="dot" style="background:${RAIN[l][1]}"></i>${RAIN[l][0]}</span>`).join(" ") +
+    " &nbsp; <span>▲ = เขื่อน</span> &nbsp; <b>Traffy:</b> " +
+    Object.entries(TF_COLOR).map(([k,c])=>`<span><i class="dot" style="background:${c};border-radius:2px"></i>${k}</span>`).join(" ");
+}
+
+/* ---------------- พื้นหลังแผนที่ ---------------- */
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+const ATTR = "Tiles &copy; Esri | ข้อมูล: ThaiWater, GISTDA, กรมอุตุฯ";
+const BASES = {
+  street: () => [L.tileLayer(ESRI+"World_Street_Map/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, attribution:ATTR})],
+  sat: () => [
+    L.tileLayer(ESRI+"World_Imagery/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, attribution:ATTR}),
+    L.tileLayer(ESRI+"Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {maxZoom:18}),
+  ],
+  dark: () => [
+    L.tileLayer(ESRI+"Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {maxZoom:16, attribution:ATTR}),
+    // ตัวอักษรชั้นบน เร่งความสว่างให้อ่านง่าย (class lbl-bright ใน CSS)
+    L.tileLayer(ESRI+"Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {maxZoom:16, className:"lbl-bright"}),
+  ],
+};
+let basemap = "street", baseLayers = [], sizeK = 1, locMarker = null;
+function setBase(name){
+  if(!BASES[name]) return;
+  basemap = name;
+  baseLayers.forEach(l => map.removeLayer(l));
+  baseLayers = BASES[name]();
+  baseLayers.forEach(l => l.addTo(map));
+  baseLayers.slice().reverse().forEach(l => l.bringToBack());   // ภาพพื้นอยู่ล่างสุด ตัวอักษรอยู่บน
+  document.querySelectorAll(".seg[data-seg=base] button").forEach(b => b.classList.toggle("active", b.dataset.b===name));
+  $("#map").classList.toggle("light", name!=="dark");
+}
+
+/* ซูมไปยังจุดที่ตรงกับคำค้น (เรียกเฉพาะตอนพิมพ์ค้นหา) */
+function zoomToSearch(){
+  if(!map || !q()) return;
+  const pts = [];
+  (DATA.waterlevel||[]).filter(hasLL).filter(w=>match(w,["name","province","amphoe","basin","river"])).forEach(w=>pts.push([w.lat,w.lon]));
+  ((DATA.main||{}).dams||[]).filter(hasLL).filter(d=>match(d,["name","province","basin"])).forEach(d=>pts.push([d.lat,d.lon]));
+  if($("#lyRain").checked) (DATA.rain||[]).filter(hasLL).filter(r=>match(r,["name","province","amphoe"])).forEach(r=>pts.push([r.lat,r.lon]));
+  if(pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.2), {maxZoom:11});
+}
+
+function popupWl(w){
+  return `<b>${esc(w.name)}</b><br>${esc(w.amphoe)} ${esc(w.province)}<br>
+    ${w.river?("แม่น้ำ: "+esc(w.river)+"<br>"):""}ลุ่มน้ำ: ${esc(w.basin)}<br>
+    ระดับน้ำ ${fmt(w.wl_msl,2)} ม.รทก. (${fmt(w.bank_pct,0)}% ตลิ่ง) ${pill(WL,w.level)}<br>
+    <small>${esc(w.time)} · ${esc(w.agency)}</small>`;
+}
+
+function renderMap(){
+  if(typeof L==="undefined"){ $("#map").innerHTML='<div class="note">โหลดแผนที่ไม่ได้</div>'; return; }
+  if(!map) initMap();
+  const risk = $("#onlyRisk").checked;
+  Object.values(layers).forEach(l=>{ if(l!==layers.sat) l.clearLayers(); });
+
+  (DATA.waterlevel||[]).filter(hasLL).filter(w=>match(w,["name","province","amphoe","basin","river"]))
+    .filter(w=>!risk || w.level>=4)
+    .sort((a,b)=>a.level-b.level)
+    .forEach(w=>{
+      L.circleMarker([w.lat,w.lon],{radius: (w.level>=4?8:5)*sizeK, color:"#0b1220", weight:1,
+        fillColor:(WL[w.level]||WL[0])[1], fillOpacity:.95}).bindPopup(popupWl(w)).addTo(layers.wl);
+    });
+
+  (DATA.rain||[]).filter(hasLL).filter(r=>r.level>0).filter(r=>match(r,["name","province","amphoe"]))
+    .filter(r=>!risk || r.level>=3)
+    .forEach(r=>{
+      L.circleMarker([r.lat,r.lon],{radius:(3+r.level*2)*sizeK, stroke:false,
+        fillColor:RAIN[r.level][1], fillOpacity:.6})
+       .bindPopup(`<b>${esc(r.name)}</b><br>${esc(r.amphoe)} ${esc(r.province)}<br>ฝน 24 ชม. <b>${fmt(r.rain)}</b> มม. ${pill(RAIN,r.level)}<br><small>${esc(r.time)}</small>`)
+       .addTo(layers.rain);
+    });
+
+  ((DATA.main||{}).dams||[]).filter(hasLL).filter(d=>match(d,["name","province","basin"]))
+    .filter(d=>!risk || d.level>=4)
+    .forEach(d=>{
+      const c=(DAM[d.level]||DAM[0])[1];
+      const icon = L.divIcon({className:"", html:`<div style="color:${c};font-size:${Math.round(20*sizeK)}px;line-height:1;text-shadow:0 0 3px #000">▲</div>`, iconSize:[20*sizeK,20*sizeK], iconAnchor:[10*sizeK,12*sizeK]});
+      L.marker([d.lat,d.lon],{icon}).bindPopup(`<b>${esc(d.name)}</b><br>${esc(d.province)}<br>
+        น้ำในอ่าง ${fmt(d.pct,0)}% ${pill(DAM,d.level)}<br>ไหลเข้า ${fmt(d.inflow,2)} · ระบาย ${fmt(d.released,2)} ล้าน ลบ.ม.<br><small>${esc(d.time)}</small>`)
+       .addTo(layers.dam);
+    });
+
+  ((DATA.traffy||{}).items||[]).filter(hasLL).filter(t=>match(t,["district","subdistrict","province","address","desc"]))
+    .filter(t=>!risk || tfOpen(t))
+    .forEach(t=>{
+      const c = tfColor(t.state);
+      const icon = L.divIcon({className:"", html:`<div style="width:${Math.round(12*sizeK)}px;height:${Math.round(12*sizeK)}px;background:${c};border:2px solid #fff;border-radius:3px;transform:rotate(45deg);box-shadow:0 0 3px #000"></div>`,
+        iconSize:[12*sizeK,12*sizeK], iconAnchor:[6*sizeK,6*sizeK]});
+      L.marker([t.lat,t.lon],{icon}).bindPopup(tfPopup(t),{maxWidth:260}).addTo(layers.tf);
+    });
+  loadSat();
+  syncLayers();
+}
+
+function loadSat(force){
+  const cur = satCur();
+  const key = satPeriod + "|" + (cur ? cur.at : "");
+  if(!force && key === satShown) return;
+  satShown = key;
+  layers.sat.clearLayers();
+  if(!cur || !cur.count) return;
+  const want = satPeriod;
+  fetch("/api/gistda.geojson?period=" + encodeURIComponent(want)).then(r=>r.json()).then(g=>{
+    if(want !== satPeriod) return;   // ผู้ใช้กดเปลี่ยนช่วงไปแล้ว
+    layers.sat.clearLayers();
+    L.geoJSON(g,{style:{color:"#ef4444",weight:1,fillColor:"#ef4444",fillOpacity:.45},
+      onEachFeature:(f,ly)=>{ const p=f.properties||{}; ly.bindPopup(`<b>พื้นที่น้ำท่วม (GISTDA)</b><br>
+        ${esc(p.tb_tn||"")} ${esc(p.ap_tn||"")} ${esc(p.pv_tn||"")}<br>
+        ขนาด ~${fmt((p.f_area||0)/1600,1)} ไร่ · ประชากร ${fmt(p.population,0)} · อาคาร ${fmt(p.building,0)}<br>
+        <small>ภาพดาวเทียม ${esc(p.file_name||"")}</small>`); }
+    }).addTo(layers.sat);
+  }).catch(()=>{ satShown=""; });
+}
+
+function syncLayers(){
+  const m = {wl:"#lyWl", rain:"#lyRain", dam:"#lyDam", sat:"#lySat", tf:"#lyTraffy"};
+  for(const [k,sel] of Object.entries(m)){
+    if($(sel).checked) layers[k].addTo(map); else map.removeLayer(layers[k]);
+  }
+}
+
+/* ---------------- ตาราง ---------------- */
+function renderWl(){
+  const lv = $("#wlLevel").value;
+  const rows = (DATA.waterlevel||[]).filter(w=>match(w,["name","province","amphoe","basin","river"]))
+    .filter(w=>!lv || String(w.level)===lv)
+    .sort((a,b)=>(b.bank_pct??-1)-(a.bank_pct??-1));
+  $("#wlCount").textContent = `${rows.length} สถานี`;
+  $("#wlTable").innerHTML = `<thead><tr><th>สถานี</th><th>จังหวัด / อำเภอ</th><th>ลุ่มน้ำ / แม่น้ำ</th>
+    <th class="num">ระดับน้ำ (ม.รทก.)</th><th>% ความจุลำน้ำ</th><th>สถานการณ์</th><th>เวลา</th></tr></thead><tbody>` +
+    rows.map(w=>{
+      const p = Math.max(0, Math.min(100, w.bank_pct||0)); const c=(WL[w.level]||WL[0])[1];
+      const trend = (w.wl_msl!=null && w.wl_prev!=null) ? (w.wl_msl>w.wl_prev?" ▲":(w.wl_msl<w.wl_prev?" ▼":"")) : "";
+      return `<tr><td>${esc(w.name)}</td><td>${esc(w.province)} / ${esc(w.amphoe)}</td>
+        <td>${esc(w.basin)}${w.river?" / "+esc(w.river):""}</td>
+        <td class="num">${fmt(w.wl_msl,2)}${trend}</td>
+        <td><div style="display:flex;gap:8px;align-items:center"><div class="bar" style="flex:1"><i style="width:${p}%;background:${c}"></i></div>${fmt(w.bank_pct,0)}%</div></td>
+        <td>${pill(WL,w.level)}</td><td class="muted">${esc(w.time)}</td></tr>`;
+    }).join("") + "</tbody>";
+}
+
+function renderRain(){
+  const rows = (DATA.rain||[]).filter(r=>match(r,["name","province","amphoe","basin"])).slice(0,500);
+  $("#rainCount").textContent = `แสดง ${rows.length} สถานี (เรียงจากฝนมากสุด)`;
+  $("#rainTable").innerHTML = `<thead><tr><th>#</th><th>สถานี</th><th>จังหวัด / อำเภอ</th><th>ลุ่มน้ำ</th>
+    <th class="num">ฝน 24 ชม. (มม.)</th><th>ระดับ</th><th>เวลา</th></tr></thead><tbody>` +
+    rows.map((r,i)=>`<tr><td class="muted">${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.province)} / ${esc(r.amphoe)}</td>
+      <td>${esc(r.basin)}</td><td class="num"><b>${fmt(r.rain)}</b></td><td>${pill(RAIN,r.level)}</td>
+      <td class="muted">${esc(r.time)}</td></tr>`).join("") + "</tbody>";
+}
+
+function renderDam(){
+  const dams = ((DATA.main||{}).dams||[]).filter(d=>match(d,["name","province","basin"]));
+  if(!dams.length){ $("#damBars").innerHTML = `<div class="note">ยังไม่มีข้อมูลเขื่อน</div>`; return; }
+  $("#damBars").innerHTML = dams.map(d=>{
+    const p = Math.max(0, Math.min(100, d.pct||0)); const c=(DAM[d.level]||DAM[0])[1];
+    return `<div class="dam"><div class="t"><b>${esc(d.name)}</b>${pill(DAM,d.level)}</div>
+      <div class="bar"><i style="width:${p}%;background:${c}"></i></div>
+      <div class="sub">น้ำในอ่าง <b style="color:var(--text)">${fmt(d.pct,1)}%</b> (${fmt(d.storage,0)} ล้าน ลบ.ม.)
+       · ใช้การได้ ${fmt(d.uses_pct,1)}%<br>ไหลเข้า ${fmt(d.inflow,2)} · ระบาย ${fmt(d.released,2)} ล้าน ลบ.ม./วัน
+       · ${esc(d.province)} · ${esc(d.time)}</div></div>`;
+  }).join("");
+}
+
+function renderSat(){
+  const g = DATA.gistda||{};
+  if(!g.configured){
+    $("#satBox").innerHTML = `<div class="note">ยังไม่ได้ใส่ <b>GISTDA_API_KEY</b> — สมัครฟรีที่
+      <a href="https://api-gateway.gistda.or.th" target="_blank" rel="noopener">api-gateway.gistda.or.th</a>
+      แล้วใส่ใน <code>config_local.json</code> จะเห็นพื้นที่น้ำท่วมจากดาวเทียมบนแผนที่และตารางนี้<br>
+      ระหว่างนี้ดูแผนที่ทางการได้ที่ <a href="https://flood.gistda.or.th" target="_blank" rel="noopener">flood.gistda.or.th</a></div>`;
+    return;
+  }
+  const cur = satCur();
+  if(!cur){ $("#satInfo").textContent=""; $("#satBox").innerHTML = `<div class="note">ยังไม่มีข้อมูลช่วง ${esc(PERIOD_TH[satPeriod])} (รอรอบดึงถัดไป)</div>`; return; }
+  const part = (cur.shown!=null && cur.shown<cur.count) ? ` (แผนที่แสดง ${fmt(cur.shown,0)})` : "";
+  $("#satInfo").textContent = `${fmt(cur.count,0)} พื้นที่${part} · รวม ${fmt(cur.rai,0)} ไร่ · ประชากรในพื้นที่ ~${fmt(cur.population,0)} คน · อาคาร ${fmt(cur.building,0)}`
+    + (cur.ok ? ` · ดึงเมื่อ ${String(cur.at||"").replace("T"," ")}` : ` · ⚠ ดึงรอบล่าสุดไม่ได้ (แสดงข้อมูลเดิม)`);
+  const rows = (cur.provinces||[]).filter(p=>match(p,["province"]));
+  if(!rows.length){ $("#satBox").innerHTML = `<div class="note">ดาวเทียมไม่พบพื้นที่น้ำท่วมในช่วง ${esc(PERIOD_TH[satPeriod])} 🎉</div>`; return; }
+  $("#satBox").innerHTML = `<div class="table-wrap"><table><thead><tr><th>จังหวัด</th><th class="num">อำเภอ</th><th class="num">จำนวนพื้นที่</th><th class="num">พื้นที่ (ไร่)</th>
+    <th class="num">ประชากร</th><th class="num">อาคาร</th><th class="num">โรงเรียน</th><th class="num">โรงพยาบาล</th></tr></thead><tbody>` +
+    rows.map(p=>`<tr><td>${esc(p.province)}</td><td class="num">${fmt(p.amphoe,0)}</td><td class="num">${fmt(p.count,0)}</td>
+      <td class="num"><b>${fmt(p.rai,0)}</b></td><td class="num">${fmt(p.population,0)}</td><td class="num">${fmt(p.building,0)}</td>
+      <td class="num">${fmt(p.school,0)}</td><td class="num">${fmt(p.hospital,0)}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+}
+
+function tfPopup(t){
+  return `<div class="tf-pop"><b>แจ้งน้ำท่วมขัง (Traffy)</b> <span class="pill" style="background:${tfColor(t.state)}">${esc(t.state||"-")}</span><br>
+    ${t.photo?`<a href="${safeUrl(t.photo)}" target="_blank" rel="noopener"><img loading="lazy" src="${safeUrl(t.photo)}" alt=""></a>`:""}
+    ${esc(t.desc)}<br><small>${esc(t.address)}<br>แจ้ง ${esc(t.time)} · ล่าสุด ${esc(t.last)}${t.org?"<br>หน่วยงาน: "+esc(t.org):""}<br>#${esc(t.id)}</small></div>`;
+}
+
+function renderTraffy(){
+  const tf = DATA.traffy || {};
+  if(tf.configured===false){ $("#tfInfo").textContent="ปิดการดึง Traffy อยู่ (TRAFFY_ENABLED)"; return; }
+  const sel = $("#tfState").value;
+  const items = (tf.items||[]).filter(t=>match(t,["district","subdistrict","province","address","desc"]))
+    .filter(t=> !sel ? true : sel==="open" ? tfOpen(t) : t.state===sel);
+  const st = tf.by_state||{};
+  $("#tfInfo").textContent = `${fmt(items.length,0)} เรื่อง (ย้อนหลัง ${fmt(tf.hours||72,0)} ชม. · ตรวจทั้งหมด ${fmt(tf.scanned||0,0)} เรื่อง) · ` +
+    Object.entries(st).map(([k,v])=>`${k} ${v}`).join(" / ");
+  const dist = {};
+  items.forEach(t=>{ const k=t.district||"ไม่ระบุ"; (dist[k] ||= {n:0, prov:t.province}).n++; });
+  const rows = Object.entries(dist).sort((a,b)=>b[1].n-a[1].n);
+  $("#tfDist").innerHTML = `<thead><tr><th>เขต/อำเภอ</th><th>จังหวัด</th><th class="num">เรื่อง</th></tr></thead><tbody>` +
+    (rows.length ? rows.map(([k,v])=>`<tr class="tf-row" data-d="${esc(k)}"><td>${esc(k)}</td><td>${esc(v.prov)}</td><td class="num"><b>${v.n}</b></td></tr>`).join("")
+                 : `<tr><td colspan="3" class="muted">ไม่มีเรื่องแจ้ง 🎉</td></tr>`) + "</tbody>";
+  $("#tfList").innerHTML = items.slice(0,300).map((t,i)=>`<div class="tf-item" data-i="${i}">
+      ${t.photo?`<img loading="lazy" src="${safeUrl(t.photo)}" alt="">`:""}
+      <div class="d"><span class="pill" style="background:${tfColor(t.state)}">${esc(t.state||"-")}</span>
+        <b>${esc(t.district)}</b> ${esc(t.subdistrict)} <span class="muted">· ${esc(t.time)}</span><br>${esc(t.desc)}</div></div>`).join("")
+    || `<div class="note">ไม่มีเรื่องแจ้งน้ำท่วมขังในช่วงนี้</div>`;
+  $("#tfList").querySelectorAll(".tf-item").forEach(el=>el.addEventListener("click",()=>{
+    const t = items[Number(el.dataset.i)];
+    if(!t || !hasLL(t) || !map) return;
+    document.querySelector('#tabs button[data-tab=map]').click();
+    $("#lyTraffy").checked = true; syncLayers();
+    setTimeout(()=>{ map.setView([t.lat,t.lon], 16); L.popup({maxWidth:260}).setLatLng([t.lat,t.lon]).setContent(tfPopup(t)).openOn(map); }, 120);
+  }));
+}
+
+function renderFc(){
+  const m = DATA.main||{};
+  const imgs = [...(m.forecast||[]), ...(m.radar||[]).slice(0,4)];
+  $("#fcImgs").innerHTML = imgs.length ? imgs.map(i=>`<a href="${safeUrl(i.url)}" target="_blank" rel="noopener">
+      <img loading="lazy" src="${safeUrl(i.thumb)}" alt=""><span>${esc(i.name||"")} ${esc(i.time)}</span></a>`).join("")
+    : `<div class="note">ยังไม่มีภาพคาดการณ์ฝน</div>`;
+  const t = DATA.tmd||{};
+  const st = (DATA.status||{}).tmd || {};
+  const site = `<a href="https://www.tmd.go.th/warning-and-events/warning-storm" target="_blank" rel="noopener">tmd.go.th</a>`;
+  const items = t.items||[];
+  let head = "";
+  if(st.ok===false) head = `<div class="note">⚠ ดึงประกาศจากกรมอุตุฯ ไม่ได้รอบล่าสุด (เว็บช้า/ล่ม) ${items.length?"— แสดงข้อมูลเดิม":""} · ดูที่ ${site}</div>`;
+  $("#tmdBox").innerHTML = head + (items.length ? items.map(w=>`<div class="warn"><b>${esc(w.title)}</b>
+      <div class="muted">${esc(w.time)}${w.link?` · <a href="${safeUrl(w.link)}" target="_blank" rel="noopener">อ่านต่อ</a>`:""}</div>${esc(w.body)}</div>`).join("")
+    : (st.ok===false ? "" : `<div class="note">ไม่มีประกาศเตือนภัยขณะนี้ · ${site}</div>`));
+}
+
+/* ---------------- event ---------------- */
+document.querySelectorAll("#tabs button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("active",x===b));
+  document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("active",p.id==="tab-"+b.dataset.tab));
+  if(b.dataset.tab==="map" && map) setTimeout(()=>map.invalidateSize(),50);
+}));
+let qTimer; $("#q").addEventListener("input",()=>{ clearTimeout(qTimer); qTimer=setTimeout(()=>{ renderAll(); zoomToSearch(); },350); });
+document.querySelectorAll(".seg[data-seg=base] button").forEach(b=>b.addEventListener("click",()=>map && setBase(b.dataset.b)));
+$("#mSize").addEventListener("input", e=>{ sizeK = Number(e.target.value)||1; $("#mSizeV").textContent = sizeK.toFixed(1)+"x"; renderMap(); });
+$("#btnFull").addEventListener("click", ()=>{
+  const box = $("#tab-map");   // เต็มจอทั้งแผง ปุ่มควบคุมยังกดได้
+  if(document.fullscreenElement) document.exitFullscreen();
+  else if(box.requestFullscreen) box.requestFullscreen().catch(()=>box.classList.toggle("pseudo-full"));
+  else box.classList.toggle("pseudo-full");
+  setTimeout(()=>map && map.invalidateSize(), 150);
+});
+document.addEventListener("fullscreenchange", ()=>{
+  $("#btnFull").textContent = document.fullscreenElement ? "⤡ ออกจากเต็มจอ" : "⛶ เต็มจอ";
+  setTimeout(()=>map && map.invalidateSize(), 150);
+});
+$("#btnHome").addEventListener("click", ()=>map && map.setView([13.2,101.0],6));
+$("#btnLocate").addEventListener("click", ()=>{
+  if(!map) return;
+  if(!navigator.geolocation){ alertMsg("เบราว์เซอร์นี้หาตำแหน่งไม่ได้"); return; }
+  $("#btnLocate").disabled = true;
+  navigator.geolocation.getCurrentPosition(p=>{
+    $("#btnLocate").disabled = false;
+    const ll = [p.coords.latitude, p.coords.longitude];
+    if(locMarker) map.removeLayer(locMarker);
+    locMarker = L.circleMarker(ll,{radius:9,color:"#fff",weight:3,fillColor:"#22d3ee",fillOpacity:1})
+      .bindPopup(`ตำแหน่งของคุณ (แม่นยำ ±${fmt(p.coords.accuracy,0)} ม.)`).addTo(map);
+    map.setView(ll, 11); locMarker.openPopup();
+  }, err=>{ $("#btnLocate").disabled = false; alertMsg("หาตำแหน่งไม่ได้: " + err.message); },
+  {enableHighAccuracy:false, timeout:10000});
+});
+function alertMsg(t){ $("#updated").textContent = t; }
+$("#wlLevel").addEventListener("change", renderWl);
+document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventListener("click",()=>{
+  satPeriod = b.dataset.p; satUserPicked = true;
+  document.querySelectorAll(".seg[data-seg=sat] button").forEach(x=>x.classList.toggle("active", x.dataset.p===satPeriod));
+  renderKpis(); renderSat(); if(map) loadSat(true);
+}));
+["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy"].forEach(s=>$(s).addEventListener("change", syncLayers));
+$("#tfState").addEventListener("change", renderTraffy);
+$("#onlyRisk").addEventListener("change", renderMap);
+$("#btnRefresh").addEventListener("click", async ()=>{
+  const b=$("#btnRefresh"); b.disabled=true;
+  try{
+    const r = await fetch("/api/refresh",{method:"POST"}); const j = await r.json();
+    $("#updated").textContent = j.msg;
+    setTimeout(load, 20000);
+  }catch(e){ $("#updated").textContent = "สั่งดึงไม่ได้"; }
+  setTimeout(()=>b.disabled=false, 60000);
+});
+
+load();
+setInterval(load, 60*1000);   // อ่านจาก cache ในเครื่อง เบา ถี่ได้ -> เห็นข้อมูลใหม่ภายใน 1 นาที

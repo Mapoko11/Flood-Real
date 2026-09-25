@@ -1,0 +1,11 @@
+{
+  "HOST": "127.0.0.1",
+  "PORT": 5095,
+  "FETCH_EVERY_MINUTES": 15,
+  "GISTDA_API_KEY": "",
+  "TMD_UID": "",
+  "TMD_UKEY": "",
+  "ALERT_WL_PERCENT": 100,
+  "ALERT_RAIN_MM": 90,
+  "ALERT_DAM_PERCENT": 100
+}

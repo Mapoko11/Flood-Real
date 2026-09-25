@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flood real — เฝ้าดูน้ำท่วมประเทศไทย</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='leaflet/leaflet.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ version }}">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo">🌊</span>
+    <div>
+      <h1>Flood real</h1>
+      <small>เฝ้าดูน้ำท่วมทั้งประเทศไทย · ข้อมูลจริงจาก ThaiWater / GISTDA / กรมอุตุฯ / Traffy Fondue</small>
+    </div>
+  </div>
+  <div class="top-right">
+    <input id="q" type="search" placeholder="ค้นจังหวัด / สถานี / เขื่อน…" autocomplete="off">
+    <button id="btnRefresh" class="btn">ดึงข้อมูลใหม่</button>
+    <span id="updated" class="muted">กำลังโหลด…</span>
+  </div>
+</header>
+
+<section class="kpis" id="kpis"></section>
+<div id="srcStatus" class="src-status"></div>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="map" class="active">แผนที่</button>
+  <button data-tab="wl">ระดับน้ำ</button>
+  <button data-tab="rain">ฝน 24 ชม.</button>
+  <button data-tab="dam">เขื่อน</button>
+  <button data-tab="sat">น้ำท่วม (ดาวเทียม)</button>
+  <button data-tab="traffy">แจ้งน้ำท่วมขัง (Traffy)</button>
+  <button data-tab="fc">พยากรณ์ / เตือนภัย</button>
+</nav>
+
+<main>
+  <section class="panel active" id="tab-map">
+    <div class="map-tools">
+      <label><input type="checkbox" id="lyWl" checked> ระดับน้ำ</label>
+      <label><input type="checkbox" id="lyRain"> ฝน</label>
+      <label><input type="checkbox" id="lyDam" checked> เขื่อน</label>
+      <label><input type="checkbox" id="lySat" checked> พื้นที่น้ำท่วม (GISTDA)</label>
+      <div class="seg" data-seg="sat">
+        <button data-p="1day" class="active">ล่าสุด</button><button data-p="3days">3 วัน</button><button data-p="7days">7 วัน</button><button data-p="30days">30 วัน</button>
+      </div>
+      <label><input type="checkbox" id="lyTraffy" checked> แจ้งน้ำท่วมขัง (Traffy)</label>
+      <label><input type="checkbox" id="onlyRisk"> เฉพาะจุดเสี่ยง</label>
+    </div>
+    <div class="map-tools map-tools2">
+      <span>พื้นหลัง:</span>
+      <div class="seg seg-blue" data-seg="base">
+        <button data-b="street" class="active">ถนน (สว่าง)</button><button data-b="sat">ภาพดาวเทียม</button><button data-b="dark">มืด</button>
+      </div>
+      <label>ขนาดจุด <input type="range" id="mSize" min="0.6" max="2" step="0.1" value="1"> <span id="mSizeV">1.0x</span></label>
+      <button class="btn btn-ghost" id="btnLocate">📍 ตำแหน่งฉัน</button>
+      <button class="btn btn-ghost" id="btnHome">🇹🇭 ทั้งประเทศ</button>
+      <button class="btn btn-ghost" id="btnFull">⛶ เต็มจอ</button>
+    </div>
+    <div id="mapBox"><div id="map"></div></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="panel" id="tab-wl">
+    <div class="filters">
+      <select id="wlLevel">
+        <option value="">ทุกระดับ</option>
+        <option value="5">ล้นตลิ่ง</option>
+        <option value="4">น้ำมาก</option>
+        <option value="3">ปกติ</option>
+        <option value="2">น้อย</option>
+        <option value="1">น้อยวิกฤต</option>
+      </select>
+      <span class="muted" id="wlCount"></span>
+    </div>
+    <div class="table-wrap"><table id="wlTable"></table></div>
+  </section>
+
+  <section class="panel" id="tab-rain">
+    <div class="filters"><span class="muted" id="rainCount"></span></div>
+    <div class="table-wrap"><table id="rainTable"></table></div>
+  </section>
+
+  <section class="panel" id="tab-dam">
+    <div id="damBars" class="dam-bars"></div>
+  </section>
+
+  <section class="panel" id="tab-sat">
+    <div class="filters"><span>ช่วงเวลา:</span>
+      <div class="seg" data-seg="sat">
+        <button data-p="1day" class="active">ล่าสุด</button><button data-p="3days">3 วัน</button><button data-p="7days">7 วัน</button><button data-p="30days">30 วัน</button>
+      </div>
+      <span class="muted" id="satInfo"></span></div>
+    <div id="satBox"></div>
+  </section>
+
+  <section class="panel" id="tab-traffy">
+    <div class="filters">
+      <select id="tfState">
+        <option value="open">เฉพาะที่ยังไม่เสร็จ</option>
+        <option value="">ทุกสถานะ</option>
+        <option value="รอรับเรื่อง">รอรับเรื่อง</option>
+        <option value="กำลังดำเนินการ">กำลังดำเนินการ</option>
+        <option value="ส่งต่อ">ส่งต่อ</option>
+        <option value="เสร็จสิ้น">เสร็จสิ้น</option>
+      </select>
+      <span class="muted" id="tfInfo"></span>
+    </div>
+    <div class="tf-grid">
+      <div><h3>รายเขต</h3><div class="table-wrap" style="max-height:60vh"><table id="tfDist"></table></div></div>
+      <div><h3>เรื่องแจ้งล่าสุด</h3><div id="tfList" class="tf-list"></div></div>
+    </div>
+  </section>
+
+  <section class="panel" id="tab-fc">
+    <h3>แผนที่คาดการณ์ฝน (ThaiWater)</h3>
+    <div id="fcImgs" class="img-grid"></div>
+    <h3>ประกาศเตือนภัย กรมอุตุนิยมวิทยา</h3>
+    <div id="tmdBox"></div>
+  </section>
+</main>
+
+<footer class="muted">
+  Flood real v{{ version }} · อัปเดตอัตโนมัติทุก {{ cfg.FETCH_EVERY_MINUTES }} นาที ·
+  เกณฑ์เตือน: น้ำ ≥ {{ cfg.ALERT_WL_PERCENT }}% ตลิ่ง / ฝน ≥ {{ cfg.ALERT_RAIN_MM }} มม. / เขื่อน ≥ {{ cfg.ALERT_DAM_PERCENT }}%
+</footer>
+
+<script src="{{ url_for('static', filename='leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
+</body>
+</html>
