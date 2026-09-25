@@ -1,0 +1,23 @@
+# ทดสอบว่า GitHub Actions เข้าถึงแหล่งข้อมูลน้ำท่วมได้ไหม (กดรันเองจากแท็บ Actions)
+name: Probe data sources
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Probe
+        env:
+          GISTDA_API_KEY: ${{ secrets.GISTDA_API_KEY }}
+          BUS_DIR: ${{ runner.temp }}/bus
+        run: python tools/probe_sources.py
