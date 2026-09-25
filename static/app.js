@@ -1,5 +1,22 @@
 /* Flood real — หน้าเว็บ (อ่านจาก /api/data อย่างเดียว) */
 "use strict";
+/* STATIC = true เมื่อเป็นเว็บบน GitHub Pages (ไม่มี server) -> อ่านไฟล์ข้อมูลตรง + เรียก RainViewer เอง */
+const STATIC = !!window.FLOOD_STATIC;
+const API = {
+  data:   () => STATIC ? "data/latest.json?t=" + Date.now() : "/api/data",
+  gistda: p  => STATIC ? `data/gistda_${encodeURIComponent(p)}.json` : "/api/gistda.geojson?period=" + encodeURIComponent(p),
+};
+let _rvCache = {at:0, data:null};
+async function getRadar(){
+  if(!STATIC) return fetch("/api/radar",{cache:"no-store"}).then(r=>r.json());
+  if(_rvCache.data && Date.now()-_rvCache.at < 5*60*1000) return _rvCache.data;
+  const js = await fetch("https://api.rainviewer.com/public/weather-maps.json").then(r=>r.json());
+  const frames = [];
+  for(const k of ["past","nowcast"]) for(const f of ((js.radar||{})[k]||[])) frames.push({time:f.time, path:f.path, now:k==="nowcast"});
+  if(!/^https:\/\//.test(js.host||"") || !frames.length) return {ok:false, error:"RainViewer format"};
+  _rvCache = {at:Date.now(), data:{ok:true, host:js.host, frames}};
+  return _rvCache.data;
+}
 
 const WL = {1:["น้อยวิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["น้ำมาก","#3b82f6"],5:["ล้นตลิ่ง","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
 const RAIN = {0:["ไม่มีฝน","#64748b"],1:["เล็กน้อย","#a5f3fc"],2:["ปานกลาง","#38bdf8"],3:["หนัก","#22c55e"],4:["หนักมาก","#f97316"]};
@@ -25,7 +42,7 @@ function hasLL(o){ return typeof o.lat==="number" && typeof o.lon==="number" && 
 /* ---------------- โหลดข้อมูล ---------------- */
 async function load(){
   try{
-    const r = await fetch("/api/data", {cache:"no-store"});
+    const r = await fetch(API.data(), {cache:"no-store"});
     DATA = await r.json();
     renderAll();
   }catch(e){
@@ -66,7 +83,7 @@ function renderKpis(){
     ["amber", dams.filter(d=>(d.pct||0)>80).length, "เขื่อนน้ำ >80%"],
     ["", cur ? (cur.provinces||[]).length : "–", "จังหวัดมีน้ำท่วม (ดาวเทียม " + PERIOD_TH[satPeriod] + ")"],
     ["", wl.length, "สถานีวัดระดับน้ำทั้งหมด"],
-    ["red", ((DATA.traffy||{}).items||[]).filter(tfOpen).length, `แจ้งน้ำท่วมขังค้าง (Traffy ${fmt((DATA.traffy||{}).hours||72,0)} ชม.)`],
+    ["red", ((DATA.traffy||{}).items||[]).filter(tfOpen).length, `แจ้งปัญหาค้าง (Traffy ${fmt((DATA.traffy||{}).hours||72,0)} ชม.)`],
   ];
   $("#kpis").innerHTML = k.map(([c,v,l])=>`<div class="kpi ${c}"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join("");
 }
@@ -191,7 +208,7 @@ function loadSat(force){
   layers.sat.clearLayers();
   if(!cur || !cur.count) return;
   const want = satPeriod;
-  fetch("/api/gistda.geojson?period=" + encodeURIComponent(want)).then(r=>r.json()).then(g=>{
+  fetch(API.gistda(want)).then(r=>r.json()).then(g=>{
     if(want !== satPeriod) return;   // ผู้ใช้กดเปลี่ยนช่วงไปแล้ว
     layers.sat.clearLayers();
     L.geoJSON(g,{style:{color:"#ef4444",weight:1,fillColor:"#ef4444",fillOpacity:.45},
@@ -278,7 +295,7 @@ function renderSat(){
 }
 
 function tfPopup(t){
-  return `<div class="tf-pop"><b>แจ้งน้ำท่วมขัง (Traffy)</b> <span class="pill" style="background:${tfColor(t.state)}">${esc(t.state||"-")}</span><br>
+  return `<div class="tf-pop"><b>แจ้งปัญหา (Traffy)</b> <span class="pill" style="background:${tfColor(t.state)}">${esc(t.state||"-")}</span><br>
     ${t.photo?`<a href="${safeUrl(t.photo)}" target="_blank" rel="noopener"><img loading="lazy" src="${safeUrl(t.photo)}" alt=""></a>`:""}
     ${esc(t.desc)}<br><small>${esc(t.address)}<br>แจ้ง ${esc(t.time)} · ล่าสุด ${esc(t.last)}${t.org?"<br>หน่วยงาน: "+esc(t.org):""}<br>#${esc(t.id)}</small></div>`;
 }
@@ -302,7 +319,7 @@ function renderTraffy(){
       ${t.photo?`<img loading="lazy" src="${safeUrl(t.photo)}" alt="">`:""}
       <div class="d"><span class="pill" style="background:${tfColor(t.state)}">${esc(t.state||"-")}</span>
         <b>${esc(t.district)}</b> ${esc(t.subdistrict)} <span class="muted">· ${esc(t.time)}</span><br>${esc(t.desc)}</div></div>`).join("")
-    || `<div class="note">ไม่มีเรื่องแจ้งน้ำท่วมขังในช่วงนี้</div>`;
+    || `<div class="note">ไม่มีเรื่องแจ้งปัญหาในช่วงนี้</div>`;
   $("#tfList").querySelectorAll(".tf-item").forEach(el=>el.addEventListener("click",()=>{
     const t = items[Number(el.dataset.i)];
     if(!t || !hasLL(t) || !map) return;
@@ -371,7 +388,7 @@ const radar = {frames:[], layers:[], idx:0, timer:null, loadedAt:0, host:"", opa
 function rdFmt(t){ return new Date(t*1000).toLocaleString("th-TH",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}); }
 async function radarLoad(){
   if(Date.now() - radar.loadedAt < 5*60*1000 && radar.frames.length) return;
-  const r = await fetch("/api/radar",{cache:"no-store"}); const j = await r.json();
+  const j = await getRadar();
   if(!j.ok){ $("#rdTime").textContent = "โหลดเรดาร์ไม่ได้"; return; }
   radarClear();
   radar.host = j.host; radar.frames = j.frames; radar.loadedAt = Date.now();
@@ -421,7 +438,7 @@ async function fcRadarInit(){
   setTimeout(()=>fcr.map.invalidateSize(),60);
   if(Date.now()-fcr.loadedAt < 5*60*1000 && fcr.layers.length){ fcRadarRun(); return; }
   try{
-    const j = await fetch("/api/radar",{cache:"no-store"}).then(r=>r.json());
+    const j = await getRadar();
     if(!j.ok) throw new Error(j.error||"");
     fcr.layers.forEach(l=>fcr.map.removeLayer(l));
     fcr.frames = j.frames.filter(f=>!f.now);
@@ -462,6 +479,7 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
 ["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy"].forEach(s=>$(s).addEventListener("change", syncLayers));
 $("#tfState").addEventListener("change", renderTraffy);
 $("#onlyRisk").addEventListener("change", renderMap);
+if(STATIC){ $("#btnRefresh").style.display="none"; }
 $("#btnRefresh").addEventListener("click", async ()=>{
   const b=$("#btnRefresh"); b.disabled=true;
   try{

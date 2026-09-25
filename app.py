@@ -101,6 +101,11 @@ def index():
 
 @app.get("/api/data")
 def api_data():
+    return jsonify(build_payload())
+
+
+def build_payload() -> dict:
+    """ข้อมูลที่หน้าเว็บใช้ (ใช้ทั้งเว็บบนเครื่อง และตอนสร้างเว็บ static บน GitHub)"""
     d = sources.load_cache()
     g = d.get("gistda") or {}
     d["gistda"] = {"configured": g.get("configured", False),
@@ -108,7 +113,7 @@ def api_data():
     d["thresholds"] = {"wl": CFG["ALERT_WL_PERCENT"], "rain": CFG["ALERT_RAIN_MM"],
                        "dam": CFG["ALERT_DAM_PERCENT"]}
     d["worker"] = _worker_state
-    return jsonify(d)
+    return d
 
 
 @app.get("/api/gistda.geojson")
