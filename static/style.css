@@ -1,6 +1,6 @@
 :root{
   --bg:#0b1220; --panel:#111a2e; --panel2:#16213a; --line:#243152;
-  --text:#e6edf7; --muted:#8fa0bf; --accent:#38bdf8;
+  --text:#f1f5fb; --muted:#aab8d0; --accent:#38bdf8;
   --lv1:#db802b; --lv2:#ffc000; --lv3:#00b050; --lv4:#3b82f6; --lv5:#ef4444;
   --r1:#a5f3fc; --r2:#38bdf8; --r3:#22c55e; --r4:#f97316;
 }
@@ -123,3 +123,41 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .fc-radar-side a{color:var(--accent)}
 .img-grid-sm img{aspect-ratio:1/1;object-fit:contain}
 @media (max-width:800px){.fc-radar{grid-template-columns:1fr}}
+
+/* ================= มือถือ: อ่านง่าย ตัวใหญ่ขึ้น แผนที่ขึ้นเร็วขึ้น ================= */
+@media (max-width:640px){
+  html,body{font-size:16px;-webkit-text-size-adjust:100%}
+  .top{padding:10px 12px}
+  .logo{font-size:26px}
+  .brand h1{font-size:20px}
+  .brand small{display:none}                       /* ซ่อนคำอธิบายยาว ประหยัดพื้นที่ */
+  .kpis{grid-template-columns:repeat(3,1fr);gap:8px;padding-top:10px}
+  .kpi{padding:8px 9px;border-radius:12px}
+  .kpi .v{font-size:22px;line-height:1.15}
+  .kpi .l{font-size:12.5px;line-height:1.35;color:#c3cee2}
+  .src-status{font-size:13px}
+  .tabs{position:sticky;top:0;z-index:500;background:var(--bg);padding-top:8px;padding-bottom:0}
+  .tabs button{padding:9px 12px;font-size:15px}
+  main{padding:0 8px 16px}
+  .panel{padding:10px;border-radius:0 12px 12px 12px}
+  .map-tools{gap:10px 14px;font-size:15px;color:var(--text)}
+  .map-tools label{display:inline-flex;align-items:center;gap:6px;min-height:32px}
+  .map-tools input[type=checkbox]{width:20px;height:20px}
+  .seg button{padding:7px 10px;font-size:14px}
+  .btn-ghost{padding:7px 12px;font-size:14.5px}
+  #map{height:62vh;min-height:360px}
+  .legend{font-size:13.5px;color:var(--text);gap:8px 12px}
+  table{font-size:14.5px}
+  th,td{padding:9px 8px}
+  .table-wrap{max-height:none;-webkit-overflow-scrolling:touch}
+  .dam-bars{grid-template-columns:1fr}
+  .dam .sub,.tf-item .d{font-size:14.5px}
+  .tf-item img{width:72px;height:72px}
+  .note,.warn{font-size:15px}
+  .img-grid{grid-template-columns:repeat(2,1fr)}
+  .radar-bar{gap:8px}
+  .rd-time{min-width:0;width:100%}
+  .leaflet-popup-content{font-size:15px;line-height:1.5}
+  .leaflet-control-zoom a{width:36px;height:36px;line-height:36px;font-size:20px}
+  footer{font-size:13.5px}
+}
