@@ -127,6 +127,17 @@
   </section>
 
   <section class="panel" id="tab-traffic">
+    <h3 class="tr-h">🧭 หาเส้นทางเลี่ยงรถติด</h3>
+    <form class="rt-form" id="rtForm" autocomplete="off">
+      <div class="rt-row"><input type="search" id="rtFrom" placeholder="ต้นทาง เช่น โรงพยาบาลวิภาวดี" maxlength="100" required>
+        <button type="button" class="btn btn-ghost" id="rtMe" title="ใช้ตำแหน่งฉัน">📍</button></div>
+      <div class="rt-row"><input type="search" id="rtTo" placeholder="ปลายทาง เช่น เซ็นทรัลลาดพร้าว" maxlength="100" required>
+        <button type="button" class="btn btn-ghost" id="rtSwap" title="สลับต้นทาง/ปลายทาง">⇅</button></div>
+      <button class="btn" type="submit" id="rtBtn">หาเส้นทาง</button>
+    </form>
+    <div id="rtInfo" class="muted"></div>
+    <div id="rtList" class="tr-list"></div>
+    <h3 class="tr-h">🚗 ค้นหารถติดตามชื่อถนน</h3>
     <form class="tr-search" id="trForm" autocomplete="off">
       <input type="search" id="trQ" placeholder="พิมพ์ชื่อถนน เช่น วิภาวดีรังสิต, พระราม 2, บางนา-ตราด" maxlength="80" required>
       <button class="btn" type="submit" id="trBtn">ค้นหารถติด</button>

@@ -62,7 +62,8 @@ def main() -> int:
     # หน้าเว็บ: render template จริง แล้วเปลี่ยน path ให้เป็นแบบ relative + เปิดโหมด STATIC
     html = webapp.app.test_client().get("/").get_data(as_text=True)
     html = html.replace('"/static/', '"static/')
-    html = html.replace("<script src=", "<script>window.FLOOD_STATIC=true;</script>\n<script src=", 1)
+    proxy = json.dumps(os.environ.get("TRAFFIC_PROXY_URL", "").strip())   # Worker ซ่อน key (ไม่ใช่ความลับ)
+    html = html.replace("<script src=", f"<script>window.FLOOD_STATIC=true;window.FLOOD_PROXY={proxy};</script>\n<script src=", 1)
     html = html.replace(f"อัปเดตอัตโนมัติทุก {CFG['FETCH_EVERY_MINUTES']} นาที",
                         f"อัปเดตอัตโนมัติทุก ~{EVERY} นาที (GitHub)")
     with open(os.path.join(SITE, "index.html"), "w", encoding="utf-8") as f:

@@ -19,7 +19,7 @@ import sources
 import traffic
 from config import CFG
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
@@ -176,6 +176,22 @@ def api_traffic():
         return jsonify({"ok": False, "error": f"ค้นหาไม่สำเร็จ: {type(e).__name__}"}), 502
 
 
+@app.get("/api/route")
+def api_route():
+    ip = request.remote_addr or "?"
+    now = time.time()
+    hits = [t for t in _tf_hits.get(ip, []) if now - t < 600]
+    if len(hits) >= 20:
+        return jsonify({"ok": False, "error": "ค้นถี่เกินไป (สูงสุด 20 ครั้ง/10 นาที) รอสักครู่"}), 429
+    _tf_hits[ip] = hits + [now]
+    try:
+        return jsonify(traffic.route(request.args.get("from", ""), request.args.get("to", "")))
+    except traffic.TrafficError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": f"หาเส้นทางไม่สำเร็จ: {type(e).__name__}"}), 502
+
+
 @app.get("/api/traffic-tile/<int:z>/<int:x>/<int:y>.png")
 def api_traffic_tile(z, x, y):
     try:
@@ -234,9 +250,20 @@ def _lan_ips() -> list[str]:
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
-if __name__ == "__main__":
-    start_worker()
+def _port_in_use(port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def main() -> int:
     host, port = CFG["HOST"], int(CFG["PORT"])
+    # กันเปิดซ้อน 2 ตัว (เช่น Guardian เปิดไว้แล้ว + กด run.bat อีก) -> ตัวที่ 2 ออกทันที ไม่ดึงข้อมูล/ไม่เตือนซ้ำ
+    if _port_in_use(port):
+        print(f"Flood real เปิดอยู่แล้วที่พอร์ต {port} — ไม่เปิดซ้ำ (ดูได้ที่ http://127.0.0.1:{port})")
+        return 1
+    start_worker()
     print(f"Flood real {VERSION}")
     print(f"  เครื่องนี้ : http://127.0.0.1:{port}")
     if host == "0.0.0.0":
@@ -249,3 +276,8 @@ if __name__ == "__main__":
     except ImportError:
         print("  server   : Flask (ยังไม่ได้ติดตั้ง waitress)")
         app.run(host=host, port=port, debug=False, use_reloader=False)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

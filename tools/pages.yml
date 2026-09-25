@@ -34,6 +34,7 @@ jobs:
           BUS_DIR: ${{ runner.temp }}/bus
           SITE_EVERY_MINUTES: "15"
           PREV_SITE_URL: https://mapoko11.github.io/Flood-Real   # ใช้ GISTDA รอบก่อน ไม่ยิงซ้ำทุก 15 นาที
+          TRAFFIC_PROXY_URL: https://floodreal-proxy.cheabracha0920.workers.dev   # Worker ซ่อน key TomTom
           TZ: Asia/Bangkok          # เวลาไทย (เว็บ + ช่วง 72 ชม. ของ Traffy)
         run: python tools/build_static.py
       - uses: actions/configure-pages@v5

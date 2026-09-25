@@ -178,3 +178,17 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .tr-foot{margin-top:12px;font-size:12.5px}
 .tr-pin{background:#fff;color:#111;border-radius:6px;padding:1px 6px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px #0008}
 @media (max-width:640px){ .tr-item .big{font-size:17px} .tr-item{font-size:15px} }
+
+/* ---- เส้นทาง ---- */
+.tr-h{margin:6px 0 10px;font-size:16px}
+.rt-form{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-bottom:8px}
+.rt-row{display:flex;gap:6px}
+.rt-row input{flex:1;min-width:0}
+.rt-card{background:var(--panel2);border:1px solid var(--line);border-left:6px solid #64748b;border-radius:10px;padding:10px 12px;cursor:pointer}
+.rt-card.best{border-left-color:#22c55e;box-shadow:0 0 0 1px #22c55e55}
+.rt-card .h{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.rt-card .t{font-size:22px;font-weight:700}
+.rt-card details{margin-top:6px}
+.rt-card summary{cursor:pointer;color:var(--accent)}
+.rt-card ol{margin:6px 0 0 18px;padding:0;line-height:1.6}
+@media (max-width:640px){ .rt-form{grid-template-columns:1fr} .rt-card .t{font-size:20px} }

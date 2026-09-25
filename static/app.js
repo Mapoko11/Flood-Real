@@ -2,6 +2,14 @@
 "use strict";
 /* STATIC = true เมื่อเป็นเว็บบน GitHub Pages (ไม่มี server) -> อ่านไฟล์ข้อมูลตรง + เรียก RainViewer เอง */
 const STATIC = !!window.FLOOD_STATIC;
+const PROXY = String(window.FLOOD_PROXY || "").replace(/\/$/, "");   // Cloudflare Worker (เว็บ github.io) — ซ่อน key TomTom
+const TR_OK = !STATIC || !!PROXY;                                    // ใช้ค้นรถติด/เส้นทางได้ไหม
+const TR_API = {
+  traffic: q => STATIC ? `${PROXY}/traffic?q=${encodeURIComponent(q)}` : `/api/traffic?q=${encodeURIComponent(q)}`,
+  route: (a,b) => STATIC ? `${PROXY}/route?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}` : `/api/route?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}`,
+  tile: STATIC ? `${PROXY}/tile/{z}/{x}/{y}.png` : "/api/traffic-tile/{z}/{x}/{y}.png",
+  usage: STATIC ? `${PROXY}/usage` : "/api/traffic-usage",
+};
 const API = {
   data:   () => STATIC ? "data/latest.json?t=" + Date.now() : "/api/data",
   gistda: p  => STATIC ? `data/gistda_${encodeURIComponent(p)}.json` : "/api/gistda.geojson?period=" + encodeURIComponent(p),
@@ -527,11 +535,11 @@ function trFocus(it){
   }, 150);
 }
 async function trSearch(q){
-  if(STATIC){ return; }
+  if(!TR_OK){ return; }
   q = (q||"").trim(); if(!q) return;
   $("#trQ").value = q; $("#trBtn").disabled = true; $("#trInfo").textContent = "กำลังค้นหา…"; $("#trList").innerHTML = "";
   try{
-    const r = await fetch("/api/traffic?q=" + encodeURIComponent(q)); const j = await r.json();
+    const r = await fetch(TR_API.traffic(q)); const j = await r.json();
     if(!j.ok){ $("#trInfo").textContent = "⚠ " + (j.error || "ค้นหาไม่สำเร็จ"); return; }
     trLast = j;
     const onRoad = j.items.filter(i=>i.on_road && i.cat===6);
@@ -547,22 +555,84 @@ async function trSearch(q){
   finally{ $("#trBtn").disabled = false; }
 }
 async function trUsage(){
-  if(STATIC) return;
-  try{ const u = await fetch("/api/traffic-usage").then(r=>r.json());
-    $("#trUsage").textContent = u.configured ? ` · โควตาเดือนนี้: ค้นถนน ${u.search.used}/${u.search.limit}, รถติด ${u.incident.used}/${u.incident.limit}` : " · ยังไม่ได้ใส่ TOMTOM_API_KEY";
+  if(!TR_OK) return;
+  try{ const u = await fetch(TR_API.usage).then(r=>r.json());
+    if(STATIC){ $("#trUsage").textContent = u.ok ? ` · โควตาวันนี้ (เว็บสาธารณะ): รถติด ${u.traffic.used}/${u.traffic.limit}, เส้นทาง ${u.route.used}/${u.route.limit}` : ""; return; }
+    $("#trUsage").textContent = u.configured ? ` · โควตาเดือนนี้: หาที่ ${u.geocode.used}/${u.geocode.limit}, รถติด ${u.incident.used}/${u.incident.limit}, เส้นทาง ${u.route.used}/${u.route.limit}` : " · ยังไม่ได้ใส่ TOMTOM_API_KEY";
   }catch(e){}
 }
 $("#trQuick").innerHTML = TR_QUICK.map(t=>`<button type="button">${esc(t)}</button>`).join("");
 $("#trQuick").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>trSearch(b.textContent)));
 $("#trForm").addEventListener("submit", e=>{ e.preventDefault(); trSearch($("#trQ").value); });
-if(STATIC){
+/* ---- หาเส้นทางเลี่ยงรถติด ---- */
+const RT_COLORS = ["#2563eb","#a855f7","#0d9488"];
+let rtLast = null;
+function rtCard(r, i){
+  const col = r.best ? "#22c55e" : RT_COLORS[i % 3];
+  return `<div class="rt-card ${r.best?"best":""}" data-i="${i}" style="border-left-color:${col}">
+    <div class="h"><span class="t">${fmt(r.minutes,0)} นาที</span><span>${fmt(r.km,1)} กม.</span>
+      ${r.best ? `<span class="pill" style="background:#22c55e">แนะนำ · เร็วสุด</span>` : (r.saves_min===0?"":"")}
+      ${r.delay_min ? `<span style="color:#f97316">ติดรวม +${fmt(r.delay_min,0)} นาที</span>` : `<span style="color:#22c55e">ไม่ค่อยติด</span>`}
+      ${r.arrive ? `<span class="muted">ถึงประมาณ ${esc(r.arrive)} น.</span>` : ""}</div>
+    <div>ผ่าน: <b>${r.via.map(esc).join(" → ") || "-"}</b></div>
+    ${r.best && rtLast && rtLast.routes.length>1 ? `<div class="muted">เร็วกว่าเส้นที่ช้าสุด ${fmt(r.saves_min,0)} นาที</div>` : ""}
+    <details><summary>ดูเส้นทางทีละขั้น (${r.steps.length})</summary><ol>${r.steps.map(x=>`<li>${esc(x.text)} <span class="muted">(${fmt(x.km,1)} กม.)</span></li>`).join("")}</ol></details>
+  </div>`;
+}
+function rtDraw(j, focus){
+  layers.tr.clearLayers();
+  j.routes.forEach((r,i)=>{
+    const col = r.best ? "#22c55e" : RT_COLORS[i % 3];
+    const on = focus===undefined ? r.best : focus===i;
+    L.polyline(r.line, {color:col, weight: on ? 8 : 5, opacity: on ? .95 : .45}).addTo(layers.tr)
+      .bindPopup(`${fmt(r.minutes,0)} นาที · ${fmt(r.km,1)} กม. · ผ่าน ${r.via.map(esc).join(" → ")}`);
+    if(on) r.jams.forEach(jm=>L.polyline(jm.line,{color: TR_COLOR[jm.magnitude]||"#ef4444", weight:9, opacity:.9}).addTo(layers.tr)
+      .bindPopup(`ช่วงรถติด ช้า +${fmt(jm.delay_min,0)} นาที${jm.speed?` · วิ่งได้ ~${fmt(jm.speed,0)} กม./ชม.`:""}`));
+  });
+  L.marker([j.from.lat,j.from.lon],{icon:trPin("ต้นทาง","#2563eb")}).addTo(layers.tr);
+  L.marker([j.to.lat,j.to.lon],{icon:trPin("ปลายทาง","#ef4444")}).addTo(layers.tr);
+}
+async function rtSearch(){
+  const a = $("#rtFrom").value.trim(), b = $("#rtTo").value.trim(); if(!a || !b) return;
+  $("#rtBtn").disabled = true; $("#rtInfo").textContent = "กำลังคำนวณเส้นทางจากสภาพจราจรตอนนี้…"; $("#rtList").innerHTML = "";
+  try{
+    const j = await fetch(TR_API.route(a,b)).then(r=>r.json());
+    if(!j.ok){ $("#rtInfo").textContent = "⚠ " + (j.error||"หาเส้นทางไม่สำเร็จ"); return; }
+    rtLast = j;
+    $("#rtInfo").innerHTML = `<b>${esc(j.from.name)}</b> → <b>${esc(j.to.name)}</b> · ${j.routes.length} เส้นทาง (จราจร ${esc(j.at.slice(11,16))} น.) · กดการ์ดเพื่อดูบนแผนที่`
+      + (j.warn ? `<div class="warn" style="margin-top:6px">⚠ ${esc(j.warn)}</div>` : "");
+    $("#rtList").innerHTML = j.routes.map(rtCard).join("");
+    $("#rtList").querySelectorAll(".rt-card").forEach(el=>el.addEventListener("click",ev=>{
+      if(ev.target.closest("details")) return;
+      const i = Number(el.dataset.i);
+      document.querySelector('#tabs button[data-tab=map]').click();
+      setTimeout(()=>{ rtDraw(j, i); map.fitBounds(L.latLngBounds(j.routes[i].line).pad(0.1)); }, 150);
+    }));
+    if(map) rtDraw(j);
+    trUsage();
+  }catch(e){ $("#rtInfo").textContent = "⚠ หาเส้นทางไม่สำเร็จ"; }
+  finally{ $("#rtBtn").disabled = false; }
+}
+$("#rtForm").addEventListener("submit", e=>{ e.preventDefault(); rtSearch(); });
+$("#rtSwap").addEventListener("click", ()=>{ const t=$("#rtFrom").value; $("#rtFrom").value=$("#rtTo").value; $("#rtTo").value=t; });
+$("#rtMe").addEventListener("click", ()=>{
+  if(!navigator.geolocation || !window.isSecureContext){ $("#rtInfo").textContent="หาตำแหน่งได้เฉพาะ https หรือ 127.0.0.1"; return; }
+  $("#rtInfo").textContent = "กำลังหาตำแหน่ง…";
+  navigator.geolocation.getCurrentPosition(p=>{ $("#rtFrom").value = `${p.coords.latitude.toFixed(5)},${p.coords.longitude.toFixed(5)}`;
+    $("#rtInfo").textContent = `ใช้ตำแหน่งฉัน (±${fmt(p.coords.accuracy,0)} ม.)`; },
+    ()=>{ $("#rtInfo").textContent = "หาตำแหน่งไม่ได้ — พิมพ์ต้นทางเองได้"; }, {enableHighAccuracy:true, timeout:15000, maximumAge:30000});
+});
+
+if(STATIC && PROXY){ trUsage(); }
+else if(STATIC){
+  $("#rtForm").hidden = true;
   $("#trForm").hidden = true; $("#trQuick").hidden = true; $("#lyFlowBox").hidden = true;
   $("#trInfo").innerHTML = `<div class="note">ค้นหารถติดใช้ได้บนเว็บในเครื่อง/วงแลนของหน่วยงาน (ต้องใช้ key TomTom ฝั่ง server ซึ่งไม่เปิดบนเว็บสาธารณะเพื่อกันโควตาหมด)</div>`;
 }else{ trUsage(); }
 $("#lyFlow").addEventListener("change", e=>{
   if(!map) return;
   if(e.target.checked){
-    flowLayer = flowLayer || L.tileLayer("/api/traffic-tile/{z}/{x}/{y}.png", {maxZoom:18, minZoom:5, zIndex:350, opacity:.9,
+    flowLayer = flowLayer || L.tileLayer(TR_API.tile, {maxZoom:18, minZoom:5, zIndex:350, opacity:.9,
       attribution:"Traffic &copy; TomTom"});
     flowLayer.addTo(map);
   }else if(flowLayer){ map.removeLayer(flowLayer); }
