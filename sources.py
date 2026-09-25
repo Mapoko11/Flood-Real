@@ -375,6 +375,36 @@ def _walk_dicts(o):
 
 
 TMD_EVERY_MINUTES = 30   # เว็บกรมอุตุฯ ช้า/ล่มบ่อย ไม่ต้องยิงทุกรอบ
+TMD_MAX_AGE_DAYS = 14    # แสดงเฉพาะประกาศที่ออกไม่เกินกี่วัน
+
+
+def _parse_thai_dt(v):
+    """อ่านวันที่หลายรูปแบบ: 15/4/2568 5:17:23 (พ.ศ.), 2026-09-25 05:00, RSS pubDate"""
+    from email.utils import parsedate_to_datetime
+    t = str(v or "").strip()
+    if not t:
+        return None
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?", t)
+    if m:
+        d, mo, y = int(m[1]), int(m[2]), int(m[3])
+        if y > 2400:
+            y -= 543                      # พ.ศ. -> ค.ศ.
+        try:
+            return datetime(y, mo, d, int(m[4] or 0), int(m[5] or 0), int(m[6] or 0))
+        except ValueError:
+            return None
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?", t)
+    if m:
+        y = int(m[1]) - (543 if int(m[1]) > 2400 else 0)
+        try:
+            return datetime(y, int(m[2]), int(m[3]), int(m[4] or 0), int(m[5] or 0))
+        except ValueError:
+            return None
+    try:
+        dt = parsedate_to_datetime(t)
+        return dt.replace(tzinfo=None) if dt else None
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 # เว็บบางแห่ง (เช่น tmd.go.th) ตั้ง SSL ไม่ครบ: ไม่ส่งใบรับรองตัวกลาง (intermediate) มาด้วย
@@ -497,7 +527,19 @@ def fetch_tmd() -> dict:
         items, mode = _tmd_from_json(_get_json(url)), "api-key"
     else:
         items, mode = _tmd_from_xml(_get_text(CFG["TMD_PUBLIC_XML"])), "public-xml"
-    return {"configured": True, "mode": mode, "at": _now(), "items": items[:20]}
+    # ฟีดบางตัวของกรมอุตุฯ ไม่อัปเดตแล้ว (ค้างของปี 2565-2568) -> เก็บเฉพาะประกาศใหม่
+    for it in items:
+        it["_dt"] = _parse_thai_dt(it.get("time"))
+    dated = [it for it in items if it["_dt"]]
+    latest = max((it["_dt"] for it in dated), default=None)
+    cutoff = datetime.now() - timedelta(days=TMD_MAX_AGE_DAYS)
+    fresh = [it for it in items if it["_dt"] is None or it["_dt"] >= cutoff]
+    fresh.sort(key=lambda it: (it["_dt"] is not None, it["_dt"] or datetime.min), reverse=True)
+    for it in items:
+        it.pop("_dt", None)
+    return {"configured": True, "mode": mode, "at": _now(), "items": fresh[:20],
+            "feed_total": len(items), "max_age_days": TMD_MAX_AGE_DAYS,
+            "feed_latest": latest.strftime("%Y-%m-%d %H:%M") if latest else ""}
 
 
 # ---------------------------------------------------------------- Traffy Fondue

@@ -343,7 +343,9 @@ function renderFc(){
   if(st.ok===false) head = `<div class="note">⚠ ดึงประกาศจากกรมอุตุฯ ไม่ได้รอบล่าสุด (เว็บช้า/ล่ม) ${items.length?"— แสดงข้อมูลเดิม":""} · ดูที่ ${site}</div>`;
   $("#tmdBox").innerHTML = head + (items.length ? items.map(w=>`<div class="warn"><b>${esc(w.title)}</b>
       <div class="muted">${esc(w.time)}${w.link?` · <a href="${safeUrl(w.link)}" target="_blank" rel="noopener">อ่านต่อ</a>`:""}</div>${esc(w.body)}</div>`).join("")
-    : (st.ok===false ? "" : `<div class="note">ไม่มีประกาศเตือนภัยขณะนี้ · ${site}</div>`));
+    : (st.ok===false ? "" : `<div class="note">ไม่มีประกาศเตือนภัยใหม่ในรอบ ${esc(t.max_age_days||14)} วัน
+        ${t.feed_latest ? `(ประกาศล่าสุดในฟีดของกรมอุตุฯ: ${esc(t.feed_latest)} — ฟีดนี้อาจไม่อัปเดตแล้ว)` : ""}
+        · ดูประกาศล่าสุดที่ ${site}</div>`));
 }
 
 /* ---------------- event ---------------- */
