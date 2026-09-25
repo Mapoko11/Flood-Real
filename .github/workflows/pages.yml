@@ -30,6 +30,7 @@ jobs:
           GISTDA_API_KEY: ${{ secrets.GISTDA_API_KEY }}
           BUS_DIR: ${{ runner.temp }}/bus
           SITE_EVERY_MINUTES: "30"
+          TZ: Asia/Bangkok          # เวลาไทย (เว็บ + ช่วง 72 ชม. ของ Traffy)
         run: python tools/build_static.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
