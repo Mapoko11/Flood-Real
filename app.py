@@ -18,7 +18,7 @@ import alerts
 import sources
 from config import CFG
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 

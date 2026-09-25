@@ -369,19 +369,39 @@ document.addEventListener("fullscreenchange", ()=>{
   setTimeout(()=>map && map.invalidateSize(), 150);
 });
 $("#btnHome").addEventListener("click", ()=>map && map.setView([13.2,101.0],6));
+/* ตำแหน่งฉัน: ขอ GPS ความแม่นยำสูง แล้ว "ฟังต่อ" สักพัก เพราะค่าแรกมักมาจากเสาสัญญาณ/Wi-Fi (คลาดหลาย กม.)
+   ค่าจะค่อยๆ แม่นขึ้นเมื่อ GPS จับดาวเทียมได้ -> อัปเดตหมุดตามค่าที่แม่นที่สุด หยุดเมื่อ <= 30 ม. หรือครบ 25 วินาที */
+let locWatch = null, locCircle = null, locBest = null, locTimer = null;
+function locStop(){
+  if(locWatch !== null){ navigator.geolocation.clearWatch(locWatch); locWatch = null; }
+  clearTimeout(locTimer); $("#btnLocate").disabled = false; $("#btnLocate").textContent = "📍 ตำแหน่งฉัน";
+}
+function locDraw(p, first){
+  const ll = [p.coords.latitude, p.coords.longitude], acc = p.coords.accuracy;
+  if(locMarker) map.removeLayer(locMarker);
+  if(locCircle) map.removeLayer(locCircle);
+  locCircle = L.circle(ll, {radius:acc, color:"#22d3ee", weight:1, fillColor:"#22d3ee", fillOpacity:.12}).addTo(map);
+  locMarker = L.circleMarker(ll,{radius:9,color:"#fff",weight:3,fillColor:"#22d3ee",fillOpacity:1})
+    .bindPopup(`ตำแหน่งของคุณ<br>ความแม่นยำ ±${fmt(acc,0)} ม.` + (acc>500 ? `<br><small>ยังไม่แม่น — เปิด GPS / ตำแหน่งแบบแม่นยำ แล้วออกที่โล่ง</small>` : "")).addTo(map);
+  if(first) map.setView(ll, acc > 2000 ? 12 : 15); else map.panTo(ll);
+  alertMsg(`📍 ความแม่นยำ ±${fmt(acc,0)} ม.` + (locWatch!==null ? " (กำลังปรับให้แม่นขึ้น…)" : ""));
+}
 $("#btnLocate").addEventListener("click", ()=>{
   if(!map) return;
   if(!navigator.geolocation){ alertMsg("เบราว์เซอร์นี้หาตำแหน่งไม่ได้"); return; }
-  $("#btnLocate").disabled = true;
-  navigator.geolocation.getCurrentPosition(p=>{
-    $("#btnLocate").disabled = false;
-    const ll = [p.coords.latitude, p.coords.longitude];
-    if(locMarker) map.removeLayer(locMarker);
-    locMarker = L.circleMarker(ll,{radius:9,color:"#fff",weight:3,fillColor:"#22d3ee",fillOpacity:1})
-      .bindPopup(`ตำแหน่งของคุณ (แม่นยำ ±${fmt(p.coords.accuracy,0)} ม.)`).addTo(map);
-    map.setView(ll, 11); locMarker.openPopup();
-  }, err=>{ $("#btnLocate").disabled = false; alertMsg("หาตำแหน่งไม่ได้: " + err.message); },
-  {enableHighAccuracy:false, timeout:10000});
+  if(!window.isSecureContext){ alertMsg("หาตำแหน่งได้เฉพาะเว็บ https (เช่น github.io) หรือ 127.0.0.1"); return; }
+  locStop(); locBest = null;
+  $("#btnLocate").disabled = true; $("#btnLocate").textContent = "📍 กำลังหา…";
+  locWatch = navigator.geolocation.watchPosition(p=>{
+    const first = !locBest;
+    if(first || p.coords.accuracy < locBest.coords.accuracy){ locBest = p; locDraw(p, first); }
+    if(p.coords.accuracy <= 30){ locStop(); locDraw(locBest, false); }
+  }, err=>{
+    locStop();
+    const why = {1:"ไม่ได้อนุญาตให้เว็บใช้ตำแหน่ง", 2:"หาสัญญาณตำแหน่งไม่ได้", 3:"หมดเวลา"}[err.code] || err.message;
+    if(!locBest) alertMsg("หาตำแหน่งไม่ได้: " + why);
+  }, {enableHighAccuracy:true, maximumAge:0, timeout:20000});
+  locTimer = setTimeout(()=>{ locStop(); if(locBest) locDraw(locBest, false); }, 25000);
 });
 function alertMsg(t){ $("#updated").textContent = t; }
 
