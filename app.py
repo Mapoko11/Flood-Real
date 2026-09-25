@@ -16,9 +16,10 @@ from flask import Flask, jsonify, render_template, request
 
 import alerts
 import sources
+import traffic
 from config import CFG
 
-VERSION = "1.5.2"
+VERSION = "1.6.0"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
@@ -154,6 +155,43 @@ def api_radar():
                     return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}), 502
                 _radar_cache["at"] = time.time() - 240      # ลองใหม่ใน 1 นาที ระหว่างนี้ใช้ของเดิม
     return jsonify(_radar_cache["data"])
+
+
+_tf_hits: dict = {}      # ip -> [เวลาที่ค้น]  กันกดค้นรัวจนโควตา TomTom หมด
+
+
+@app.get("/api/traffic")
+def api_traffic():
+    ip = request.remote_addr or "?"
+    now = time.time()
+    hits = [t for t in _tf_hits.get(ip, []) if now - t < 600]
+    if len(hits) >= 20:
+        return jsonify({"ok": False, "error": "ค้นถี่เกินไป (สูงสุด 20 ครั้ง/10 นาที) รอสักครู่"}), 429
+    _tf_hits[ip] = hits + [now]
+    try:
+        return jsonify(traffic.search(request.args.get("q", "")))
+    except traffic.TrafficError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": f"ค้นหาไม่สำเร็จ: {type(e).__name__}"}), 502
+
+
+@app.get("/api/traffic-tile/<int:z>/<int:x>/<int:y>.png")
+def api_traffic_tile(z, x, y):
+    try:
+        data = traffic.flow_tile(z, x, y)
+    except traffic.TrafficError:
+        return ("", 204)
+    except Exception:  # noqa: BLE001
+        return ("", 204)
+    resp = app.response_class(data, mimetype="image/png")
+    resp.headers["Cache-Control"] = "public, max-age=120"
+    return resp
+
+
+@app.get("/api/traffic-usage")
+def api_traffic_usage():
+    return jsonify({"configured": bool((CFG.get("TOMTOM_API_KEY") or "").strip()), **traffic.usage()})
 
 
 @app.post("/api/refresh")

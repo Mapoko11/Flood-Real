@@ -161,3 +161,20 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
   .leaflet-control-zoom a{width:36px;height:36px;line-height:36px;font-size:20px}
   footer{font-size:13.5px}
 }
+
+/* ---- รถติด ---- */
+.tr-search{display:flex;gap:8px;margin-bottom:10px}
+.tr-search input{flex:1;min-width:0}
+.tr-quick{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.tr-quick button{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:4px 12px;font:inherit;font-size:13.5px;cursor:pointer}
+.tr-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.tr-item{background:var(--panel2);border:1px solid var(--line);border-left:5px solid #94a3b8;border-radius:10px;padding:10px 12px;cursor:pointer}
+.tr-item:hover{border-color:var(--accent)}
+.tr-item .h{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tr-item .big{font-size:18px;font-weight:700}
+.tr-item .route{margin-top:6px;line-height:1.6}
+.tr-item .route b{color:var(--text)}
+.tr-item .tag{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--muted)}
+.tr-foot{margin-top:12px;font-size:12.5px}
+.tr-pin{background:#fff;color:#111;border-radius:6px;padding:1px 6px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px #0008}
+@media (max-width:640px){ .tr-item .big{font-size:17px} .tr-item{font-size:15px} }

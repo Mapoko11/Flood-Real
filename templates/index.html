@@ -35,6 +35,7 @@
   <button data-tab="dam">เขื่อน</button>
   <button data-tab="sat">น้ำท่วม (ดาวเทียม)</button>
   <button data-tab="traffy">แจ้งปัญหา (Traffy)</button>
+  <button data-tab="traffic">🚗 รถติด</button>
   <button data-tab="fc">พยากรณ์ / เตือนภัย</button>
 </nav>
 
@@ -50,6 +51,7 @@
       </div>
       <label><input type="checkbox" id="lyTraffy" checked> แจ้งปัญหา (Traffy)</label>
       <label><input type="checkbox" id="lyRadar"> เรดาร์ฝน (RainViewer)</label>
+      <label id="lyFlowBox"><input type="checkbox" id="lyFlow"> สีการจราจร (TomTom)</label>
       <label><input type="checkbox" id="onlyRisk"> เฉพาะจุดเสี่ยง</label>
     </div>
     <div class="map-tools map-tools2">
@@ -122,6 +124,18 @@
       <div><h3>รายเขต</h3><div class="table-wrap" style="max-height:60vh"><table id="tfDist"></table></div></div>
       <div><h3>เรื่องแจ้งล่าสุด</h3><div id="tfList" class="tf-list"></div></div>
     </div>
+  </section>
+
+  <section class="panel" id="tab-traffic">
+    <form class="tr-search" id="trForm" autocomplete="off">
+      <input type="search" id="trQ" placeholder="พิมพ์ชื่อถนน เช่น วิภาวดีรังสิต, พระราม 2, บางนา-ตราด" maxlength="80" required>
+      <button class="btn" type="submit" id="trBtn">ค้นหารถติด</button>
+    </form>
+    <div class="tr-quick" id="trQuick"></div>
+    <div id="trInfo" class="muted"></div>
+    <div id="trList" class="tr-list"></div>
+    <div class="muted tr-foot">ข้อมูลจราจร: TomTom · ท้ายแถว = จุดเริ่มรถติด (ที่รถเข้าไปต่อแถว) · หัวแถว = จุดที่ติด/คอขวด
+      <span id="trUsage"></span></div>
   </section>
 
   <section class="panel" id="tab-fc">

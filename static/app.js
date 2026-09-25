@@ -103,7 +103,8 @@ function renderStatus(){
 function initMap(){
   map = L.map("map", {preferCanvas:true}).setView([13.2, 101.0], 6);
   setBase(basemap);
-  ["wl","rain","dam","sat","tf"].forEach(n => layers[n] = L.layerGroup());
+  ["wl","rain","dam","sat","tf","tr"].forEach(n => layers[n] = L.layerGroup());
+  layers.tr.addTo(map);
   $("#legend").innerHTML =
     "<b>ระดับน้ำ:</b> " + [5,4,3,2,1].map(l=>`<span><i class="dot" style="background:${WL[l][1]}"></i>${WL[l][0]}</span>`).join(" ") +
     " &nbsp; <b>ฝน:</b> " + [4,3,2,1].map(l=>`<span><i class="dot" style="background:${RAIN[l][1]}"></i>${RAIN[l][0]}</span>`).join(" ") +
@@ -159,7 +160,7 @@ function renderMap(){
   if(typeof L==="undefined"){ $("#map").innerHTML='<div class="note">โหลดแผนที่ไม่ได้</div>'; return; }
   if(!map) initMap();
   const risk = $("#onlyRisk").checked;
-  Object.values(layers).forEach(l=>{ if(l!==layers.sat) l.clearLayers(); });
+  Object.values(layers).forEach(l=>{ if(l!==layers.sat && l!==layers.tr) l.clearLayers(); });   // ผลค้นรถติดไม่ลบตอนรีเฟรช
 
   (DATA.waterlevel||[]).filter(hasLL).filter(w=>match(w,["name","province","amphoe","basin","river"]))
     .filter(w=>!risk || w.level>=4)
@@ -488,6 +489,84 @@ $("#fcRdOpen").addEventListener("click", ()=>{
 document.querySelectorAll("#tabs button").forEach(b=>b.addEventListener("click",()=>{
   if(b.dataset.tab==="fc") fcRadarInit(); else fcRadarRun();   // ออกจากแท็บ -> หยุดวน ประหยัดเครื่อง
 }));
+
+/* ---------------- รถติด (TomTom) — ใช้ได้เฉพาะเว็บที่มี server (key อยู่ฝั่ง server) ---------------- */
+const TR_COLOR = {0:"#94a3b8",1:"#facc15",2:"#f97316",3:"#ef4444",4:"#7f1d1d"};
+const TR_QUICK = ["วิภาวดีรังสิต","พหลโยธิน","พระราม 2","บางนา-ตราด","รามอินทรา","แจ้งวัฒนะ","ลาดพร้าว","สุขุมวิท"];
+let flowLayer = null, trLast = null;
+function trPin(txt, bg){ return L.divIcon({className:"", html:`<div class="tr-pin" style="border:2px solid ${bg}">${esc(txt)}</div>`, iconSize:null}); }
+function trCard(it, i){
+  const c = TR_COLOR[it.magnitude] || TR_COLOR[0];
+  const jam = it.cat === 6;
+  return `<div class="tr-item" data-i="${i}" style="border-left-color:${c}">
+    <div class="h"><span class="pill" style="background:${c};color:${it.magnitude===1?'#111':'#fff'}">${esc(it.category)} · ${esc(it.magnitude_text)}</span>
+      ${it.length_km ? `<span class="big">${fmt(it.length_km,1)} กม.</span>` : ""}
+      ${it.delay_min ? `<span class="big" style="color:${c}">+${fmt(it.delay_min,0)} นาที</span>` : ""}
+      ${it.on_road ? `<span class="tag">บนถนนที่ค้น</span>` : `<span class="tag">ถนนใกล้เคียง</span>`}</div>
+    <div class="route">${jam ? "🚗 ท้ายแถว" : "จาก"}: <b>${esc(it.tail||"-")}</b><br>${jam ? "🚦 หัวแถว (จุดที่ติด)" : "ถึง"}: <b>${esc(it.head||"-")}</b></div>
+    ${it.events.length ? `<div class="muted">${it.events.map(esc).join(" · ")}</div>` : ""}
+  </div>`;
+}
+function trDraw(res){
+  layers.tr.clearLayers();
+  (res.items||[]).forEach((it,i)=>{
+    const c = TR_COLOR[it.magnitude] || TR_COLOR[0];
+    const line = L.polyline(it.line, {color:c, weight: it.on_road ? 8 : 5, opacity:.9}).addTo(layers.tr);
+    line.bindPopup(trCard(it,i).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280});
+  });
+}
+function trFocus(it){
+  document.querySelector('#tabs button[data-tab=map]').click();
+  setTimeout(()=>{
+    const b = L.latLngBounds(it.line); map.fitBounds(b.pad(0.25), {maxZoom:16});
+    const c = TR_COLOR[it.magnitude] || TR_COLOR[0];
+    if(it.line.length > 1){
+      L.marker(it.line[0], {icon:trPin("ท้ายแถว", c)}).addTo(layers.tr);
+      L.marker(it.line[it.line.length-1], {icon:trPin("หัวแถว", c)}).addTo(layers.tr);
+    }
+  }, 150);
+}
+async function trSearch(q){
+  if(STATIC){ return; }
+  q = (q||"").trim(); if(!q) return;
+  $("#trQ").value = q; $("#trBtn").disabled = true; $("#trInfo").textContent = "กำลังค้นหา…"; $("#trList").innerHTML = "";
+  try{
+    const r = await fetch("/api/traffic?q=" + encodeURIComponent(q)); const j = await r.json();
+    if(!j.ok){ $("#trInfo").textContent = "⚠ " + (j.error || "ค้นหาไม่สำเร็จ"); return; }
+    trLast = j;
+    const onRoad = j.items.filter(i=>i.on_road && i.cat===6);
+    const km = onRoad.reduce((a,i)=>a+i.length_km,0);
+    $("#trInfo").innerHTML = `<b>${esc(j.road.name)}</b> ${esc(j.road.area)} · พบ ${j.total} เหตุการณ์ในบริเวณ` +
+      (onRoad.length ? ` · <b style="color:#ef4444">รถติดบนถนนนี้ ${onRoad.length} ช่วง รวม ${fmt(km,1)} กม.</b>` : " · ไม่พบรถติดบนถนนนี้ขณะนี้ 👍") +
+      ` <span class="muted">(ข้อมูล ${esc(j.at.slice(11,16))} น.${j.cached ? " · ผลล่าสุดใน 5 นาที" : ""})</span>`;
+    $("#trList").innerHTML = j.items.map(trCard).join("") || `<div class="note">ไม่มีเหตุรถติดในบริเวณนี้</div>`;
+    $("#trList").querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>trFocus(j.items[Number(el.dataset.i)])));
+    if(map) trDraw(j);
+    trUsage();
+  }catch(e){ $("#trInfo").textContent = "⚠ ค้นหาไม่สำเร็จ"; }
+  finally{ $("#trBtn").disabled = false; }
+}
+async function trUsage(){
+  if(STATIC) return;
+  try{ const u = await fetch("/api/traffic-usage").then(r=>r.json());
+    $("#trUsage").textContent = u.configured ? ` · โควตาเดือนนี้: ค้นถนน ${u.search.used}/${u.search.limit}, รถติด ${u.incident.used}/${u.incident.limit}` : " · ยังไม่ได้ใส่ TOMTOM_API_KEY";
+  }catch(e){}
+}
+$("#trQuick").innerHTML = TR_QUICK.map(t=>`<button type="button">${esc(t)}</button>`).join("");
+$("#trQuick").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>trSearch(b.textContent)));
+$("#trForm").addEventListener("submit", e=>{ e.preventDefault(); trSearch($("#trQ").value); });
+if(STATIC){
+  $("#trForm").hidden = true; $("#trQuick").hidden = true; $("#lyFlowBox").hidden = true;
+  $("#trInfo").innerHTML = `<div class="note">ค้นหารถติดใช้ได้บนเว็บในเครื่อง/วงแลนของหน่วยงาน (ต้องใช้ key TomTom ฝั่ง server ซึ่งไม่เปิดบนเว็บสาธารณะเพื่อกันโควตาหมด)</div>`;
+}else{ trUsage(); }
+$("#lyFlow").addEventListener("change", e=>{
+  if(!map) return;
+  if(e.target.checked){
+    flowLayer = flowLayer || L.tileLayer("/api/traffic-tile/{z}/{x}/{y}.png", {maxZoom:18, minZoom:5, zIndex:350, opacity:.9,
+      attribution:"Traffic &copy; TomTom"});
+    flowLayer.addTo(map);
+  }else if(flowLayer){ map.removeLayer(flowLayer); }
+});
 
 // เปิดค้างไว้ -> รีเฟรชเฟรมใหม่ทุก 5 นาที
 setInterval(()=>{ if($("#lyRadar").checked && map){ const playing=!!radar.timer; radar.loadedAt=0;

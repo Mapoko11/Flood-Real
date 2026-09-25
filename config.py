@@ -36,6 +36,10 @@ DEFAULTS = {
     "TRAFFY_URL": "https://publicapi.traffy.in.th/teamchadchart-stat-api/geojson/v1",
     "TRAFFY_HOURS": 72,            # ย้อนหลังกี่ชั่วโมง
 
+    # ---- TomTom Traffic (รถติด) — สมัคร key ฟรีที่ developer.tomtom.com ----
+    "TOMTOM_API_KEY": "",
+    "TRAFFIC_CACHE_MINUTES": 5,    # ถนนเดิมค้นซ้ำภายในกี่นาทีใช้ผลเดิม (ประหยัดโควตา 2,500/เดือน)
+
     # ---- เกณฑ์แจ้งเตือน ----
     "ALERT_ENABLED": True,
     "ALERT_WL_PERCENT": 100,       # ระดับน้ำ >= % ความจุลำน้ำ (100 = ล้นตลิ่ง)
