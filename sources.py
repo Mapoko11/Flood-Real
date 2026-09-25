@@ -208,17 +208,31 @@ def fetch_main() -> dict:
         })
     dams.sort(key=lambda r: (r["pct"] is None, -(r["pct"] or 0)))
 
+    # media_path ของ ThaiWater เป็น token ต้องแปลงเป็น URL ผ่าน /shared/image?image=<token>
+    shared = CFG["THAIWATER_BASE"].rsplit("/public", 1)[0] + "/shared/image?image="
+
+    def to_url(v) -> str:
+        v = str(v or "").strip()
+        if not v:
+            return ""
+        if v.startswith("https://"):
+            return v
+        if v.startswith("http"):
+            return ""
+        return shared + urllib.parse.quote(v, safe="")
+
     def media(section):
         out = []
         for it in _items(js, section, "data", "data") or _items(js, section, "data"):
-            url = it.get("media_path") or ""
-            thumb = it.get("media_path_thumb") or url
-            if isinstance(url, str) and url.startswith("http"):
-                out.append({
-                    "url": url, "thumb": thumb if str(thumb).startswith("http") else url,
-                    "time": str(it.get("media_datetime") or ""),
-                    "name": _th(it.get("radar_name")) or _th(it.get("filename")),
-                })
+            url = to_url(it.get("media_path"))
+            if not url:
+                continue
+            out.append({
+                "url": url, "thumb": to_url(it.get("media_path_thumb")) or url,
+                "time": str(it.get("media_datetime") or ""),
+                "name": _th(it.get("radar_name")) or _th(it.get("filename")),
+                "tz": str(it.get("timezone") or ""),
+            })
         return out
 
     return {"dams": dams, "forecast": media("pre_rain")[:8], "radar": media("radar")[:12]}

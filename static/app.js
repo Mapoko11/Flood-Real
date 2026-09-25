@@ -314,10 +314,10 @@ function renderTraffy(){
 
 function renderFc(){
   const m = DATA.main||{};
-  const imgs = [...(m.forecast||[]), ...(m.radar||[]).slice(0,4)];
-  $("#fcImgs").innerHTML = imgs.length ? imgs.map(i=>`<a href="${safeUrl(i.url)}" target="_blank" rel="noopener">
-      <img loading="lazy" src="${safeUrl(i.thumb)}" alt=""><span>${esc(i.name||"")} ${esc(i.time)}</span></a>`).join("")
-    : `<div class="note">ยังไม่มีภาพคาดการณ์ฝน</div>`;
+  const card = i=>`<a href="${safeUrl(i.url)}" target="_blank" rel="noopener">
+      <img loading="lazy" src="${safeUrl(i.thumb)}" alt=""><span>${esc(i.name||"")} · ${esc(i.time)}${i.tz==="UTC"?" UTC":""}</span></a>`;
+  $("#fcImgs").innerHTML = (m.forecast||[]).length ? m.forecast.map(card).join("") : `<div class="note">ยังไม่มีภาพคาดการณ์ฝน</div>`;
+  $("#rdImgs").innerHTML = (m.radar||[]).length ? m.radar.map(card).join("") : `<div class="note">ยังไม่มีภาพเรดาร์</div>`;
   const t = DATA.tmd||{};
   const st = (DATA.status||{}).tmd || {};
   const site = `<a href="https://www.tmd.go.th/warning-and-events/warning-storm" target="_blank" rel="noopener">tmd.go.th</a>`;
@@ -365,6 +365,94 @@ $("#btnLocate").addEventListener("click", ()=>{
   {enableHighAccuracy:false, timeout:10000});
 });
 function alertMsg(t){ $("#updated").textContent = t; }
+
+/* ---------------- เรดาร์ฝน RainViewer ---------------- */
+const radar = {frames:[], layers:[], idx:0, timer:null, loadedAt:0, host:"", opacity:0.7};
+function rdFmt(t){ return new Date(t*1000).toLocaleString("th-TH",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}); }
+async function radarLoad(){
+  if(Date.now() - radar.loadedAt < 5*60*1000 && radar.frames.length) return;
+  const r = await fetch("/api/radar",{cache:"no-store"}); const j = await r.json();
+  if(!j.ok){ $("#rdTime").textContent = "โหลดเรดาร์ไม่ได้"; return; }
+  radarClear();
+  radar.host = j.host; radar.frames = j.frames; radar.loadedAt = Date.now();
+  radar.layers = radar.frames.map(f => L.tileLayer(`${j.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, {
+    opacity:0, maxNativeZoom:7, maxZoom:18, zIndex:300, attribution:'Weather data by <a href="https://www.rainviewer.com/">RainViewer</a>'}));
+  const lastPast = radar.frames.map(f=>f.now).lastIndexOf(false);
+  $("#rdFrame").max = radar.frames.length-1;
+  radarShow(lastPast >= 0 ? lastPast : radar.frames.length-1);
+}
+function radarClear(){
+  radarStop(); radar.layers.forEach(l=>map.removeLayer(l)); radar.layers = []; radar.frames = [];
+}
+function radarShow(i){
+  if(!radar.layers.length) return;
+  radar.idx = (i + radar.layers.length) % radar.layers.length;
+  radar.layers.forEach((l,k)=>{
+    if(k===radar.idx || k===(radar.idx+1)%radar.layers.length){ if(!map.hasLayer(l)) l.addTo(map); } // โหลดเฟรมถัดไปรอไว้
+    l.setOpacity(k===radar.idx ? radar.opacity : 0);
+  });
+  const f = radar.frames[radar.idx];
+  $("#rdFrame").value = radar.idx;
+  $("#rdTime").textContent = rdFmt(f.time) + (f.now ? " (คาดการณ์)" : "");
+}
+function radarStop(){ if(radar.timer){ clearInterval(radar.timer); radar.timer=null; } $("#rdPlay").textContent="▶ เล่น"; }
+function radarPlay(){
+  if(radar.timer){ radarStop(); return; }
+  $("#rdPlay").textContent="⏸ หยุด";
+  radar.timer = setInterval(()=>radarShow(radar.idx+1), 700);
+}
+$("#lyRadar").addEventListener("change", async e=>{
+  if(!map) return;
+  $("#radarBar").hidden = !e.target.checked;
+  if(e.target.checked){ try{ await radarLoad(); }catch(err){ $("#rdTime").textContent="โหลดเรดาร์ไม่ได้"; } }
+  else radarClear();
+});
+$("#rdPlay").addEventListener("click", radarPlay);
+$("#rdFrame").addEventListener("input", e=>{ radarStop(); radarShow(Number(e.target.value)); });
+$("#rdOpacity").addEventListener("input", e=>{ radar.opacity = Number(e.target.value); radarShow(radar.idx); });
+/* เรดาร์เล็กในแท็บพยากรณ์ (แยกจากแผนที่ใหญ่) */
+const fcr = {map:null, layers:[], frames:[], idx:0, timer:null, loadedAt:0, playing:true};
+async function fcRadarInit(){
+  if(typeof L==="undefined") return;
+  if(!fcr.map){
+    fcr.map = L.map("fcMap",{zoomControl:true, attributionControl:true}).setView([13.2,101.0],5);
+    L.tileLayer(ESRI+"World_Street_Map/MapServer/tile/{z}/{y}/{x}",{maxZoom:10, attribution:ATTR}).addTo(fcr.map);
+  }
+  setTimeout(()=>fcr.map.invalidateSize(),60);
+  if(Date.now()-fcr.loadedAt < 5*60*1000 && fcr.layers.length){ fcRadarRun(); return; }
+  try{
+    const j = await fetch("/api/radar",{cache:"no-store"}).then(r=>r.json());
+    if(!j.ok) throw new Error(j.error||"");
+    fcr.layers.forEach(l=>fcr.map.removeLayer(l));
+    fcr.frames = j.frames.filter(f=>!f.now);
+    fcr.layers = fcr.frames.map(f=>L.tileLayer(`${j.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`,{opacity:0, maxNativeZoom:7, maxZoom:10, zIndex:300}).addTo(fcr.map));
+    fcr.loadedAt = Date.now(); fcr.idx = fcr.layers.length-1; fcShow(fcr.idx); fcRadarRun();
+  }catch(e){ $("#fcRdTime").textContent = "โหลดเรดาร์ไม่ได้"; }
+}
+function fcShow(i){
+  if(!fcr.layers.length) return;
+  fcr.idx = (i+fcr.layers.length)%fcr.layers.length;
+  fcr.layers.forEach((l,k)=>l.setOpacity(k===fcr.idx?0.75:0));
+  $("#fcRdTime").textContent = rdFmt(fcr.frames[fcr.idx].time);
+}
+function fcRadarRun(){
+  clearInterval(fcr.timer); fcr.timer=null;
+  const visible = document.querySelector("#tab-fc").classList.contains("active");
+  if(fcr.playing && visible) fcr.timer = setInterval(()=>fcShow(fcr.idx+1), 800);
+  $("#fcRdPlay").textContent = fcr.playing ? "⏸ หยุด" : "▶ เล่น";
+}
+$("#fcRdPlay").addEventListener("click", ()=>{ fcr.playing=!fcr.playing; fcRadarRun(); });
+$("#fcRdOpen").addEventListener("click", ()=>{
+  document.querySelector('#tabs button[data-tab=map]').click();
+  const cb=$("#lyRadar"); if(!cb.checked){ cb.checked=true; cb.dispatchEvent(new Event("change")); }
+});
+document.querySelectorAll("#tabs button").forEach(b=>b.addEventListener("click",()=>{
+  if(b.dataset.tab==="fc") fcRadarInit(); else fcRadarRun();   // ออกจากแท็บ -> หยุดวน ประหยัดเครื่อง
+}));
+
+// เปิดค้างไว้ -> รีเฟรชเฟรมใหม่ทุก 5 นาที
+setInterval(()=>{ if($("#lyRadar").checked && map){ const playing=!!radar.timer; radar.loadedAt=0;
+  radarLoad().then(()=>{ if(playing) radarPlay(); }).catch(()=>{}); } }, 5*60*1000);
 $("#wlLevel").addEventListener("change", renderWl);
 document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventListener("click",()=>{
   satPeriod = b.dataset.p; satUserPicked = true;

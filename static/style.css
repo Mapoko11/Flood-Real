@@ -111,3 +111,15 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .tf-item .d{font-size:13.5px;line-height:1.5;overflow:hidden}
 .tf-pop img{width:220px;max-height:180px;object-fit:cover;border-radius:6px;display:block;margin:4px 0}
 @media (max-width:800px){.tf-grid{grid-template-columns:1fr}}
+
+.radar-bar{align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+.radar-bar a{color:var(--accent)}
+.rd-time{font-variant-numeric:tabular-nums;min-width:150px;color:var(--text);font-weight:600}
+.radar-bar[hidden]{display:none}
+
+.fc-radar{display:grid;grid-template-columns:1fr 220px;gap:12px;margin-bottom:18px}
+#fcMap{height:420px;border-radius:12px;border:1px solid var(--line)}
+.fc-radar-side{display:flex;flex-direction:column;gap:10px}
+.fc-radar-side a{color:var(--accent)}
+.img-grid-sm img{aspect-ratio:1/1;object-fit:contain}
+@media (max-width:800px){.fc-radar{grid-template-columns:1fr}}

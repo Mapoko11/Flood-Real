@@ -49,6 +49,7 @@
         <button data-p="1day" class="active">ล่าสุด</button><button data-p="3days">3 วัน</button><button data-p="7days">7 วัน</button><button data-p="30days">30 วัน</button>
       </div>
       <label><input type="checkbox" id="lyTraffy" checked> แจ้งน้ำท่วมขัง (Traffy)</label>
+      <label><input type="checkbox" id="lyRadar"> เรดาร์ฝน (RainViewer)</label>
       <label><input type="checkbox" id="onlyRisk"> เฉพาะจุดเสี่ยง</label>
     </div>
     <div class="map-tools map-tools2">
@@ -60,6 +61,13 @@
       <button class="btn btn-ghost" id="btnLocate">📍 ตำแหน่งฉัน</button>
       <button class="btn btn-ghost" id="btnHome">🇹🇭 ทั้งประเทศ</button>
       <button class="btn btn-ghost" id="btnFull">⛶ เต็มจอ</button>
+    </div>
+    <div class="map-tools radar-bar" id="radarBar" hidden>
+      <button class="btn btn-ghost" id="rdPlay">▶ เล่น</button>
+      <input type="range" id="rdFrame" min="0" max="0" value="0" style="flex:1;min-width:160px">
+      <span id="rdTime" class="rd-time">-</span>
+      <label>ความทึบ <input type="range" id="rdOpacity" min="0.2" max="1" step="0.1" value="0.7"></label>
+      <span class="muted">Weather data by <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a></span>
     </div>
     <div id="mapBox"><div id="map"></div></div>
     <div class="legend" id="legend"></div>
@@ -117,8 +125,20 @@
   </section>
 
   <section class="panel" id="tab-fc">
-    <h3>แผนที่คาดการณ์ฝน (ThaiWater)</h3>
+    <h3>เรดาร์ฝนล่าสุด (RainViewer)</h3>
+    <div class="fc-radar">
+      <div id="fcMap"></div>
+      <div class="fc-radar-side">
+        <div id="fcRdTime" class="rd-time">-</div>
+        <button class="btn btn-ghost" id="fcRdPlay">⏸ หยุด</button>
+        <button class="btn btn-ghost" id="fcRdOpen">เปิดบนแผนที่ใหญ่ →</button>
+        <small class="muted">ย้อนหลัง 2 ชม. เล่นวนอัตโนมัติ<br>Weather data by <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a></small>
+      </div>
+    </div>
+    <h3>แผนที่คาดการณ์ฝนล่วงหน้า (ThaiWater)</h3>
     <div id="fcImgs" class="img-grid"></div>
+    <h3>ภาพเรดาร์รายสถานี (ThaiWater)</h3>
+    <div id="rdImgs" class="img-grid img-grid-sm"></div>
     <h3>ประกาศเตือนภัย กรมอุตุนิยมวิทยา</h3>
     <div id="tmdBox"></div>
   </section>

@@ -18,7 +18,7 @@ import alerts
 import sources
 from config import CFG
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
@@ -121,6 +121,34 @@ def api_gistda():
             return app.response_class(f.read(), mimetype="application/json")
     except OSError:
         return jsonify({"type": "FeatureCollection", "features": []})
+
+
+_radar_cache = {"at": 0.0, "data": None}
+_radar_lock = threading.Lock()
+RADAR_URL = "https://api.rainviewer.com/public/weather-maps.json"
+
+
+@app.get("/api/radar")
+def api_radar():
+    """รายการเฟรมเรดาร์ RainViewer — ให้ server ถือ cache 5 นาที
+    (หลายเครื่องเปิดพร้อมกันก็ยิง RainViewer แค่ครั้งเดียว ตามเงื่อนไขห้ามยิงถี่)"""
+    with _radar_lock:
+        if _radar_cache["data"] is None or time.time() - _radar_cache["at"] > 300:
+            try:
+                js = sources._get_json(RADAR_URL)
+                host = js.get("host") if isinstance(js, dict) else None
+                radar = (js or {}).get("radar") or {}
+                frames = [{"time": int(f["time"]), "path": str(f["path"]), "now": k == "nowcast"}
+                          for k in ("past", "nowcast") for f in (radar.get(k) or [])
+                          if isinstance(f, dict) and "time" in f and "path" in f]
+                if not (isinstance(host, str) and host.startswith("https://") and frames):
+                    raise ValueError("รูปแบบข้อมูล RainViewer ไม่ถูกต้อง")
+                _radar_cache.update(at=time.time(), data={"ok": True, "host": host, "frames": frames})
+            except Exception as e:  # noqa: BLE001
+                if _radar_cache["data"] is None:
+                    return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}), 502
+                _radar_cache["at"] = time.time() - 240      # ลองใหม่ใน 1 นาที ระหว่างนี้ใช้ของเดิม
+    return jsonify(_radar_cache["data"])
 
 
 @app.post("/api/refresh")
