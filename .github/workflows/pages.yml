@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: "7,37 * * * *"      # ทุก 30 นาที (นาทีที่ 7 และ 37 เลี่ยงช่วงคิวแน่น)
   workflow_dispatch:
+  push:                         # push โค้ดขึ้น main -> สร้างเว็บใหม่ทันที
+    branches: [main]
+    paths-ignore: ["README.md", "tools/probe*", ".github/workflows/probe.yml"]
 
 permissions:
   contents: read

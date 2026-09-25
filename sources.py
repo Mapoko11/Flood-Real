@@ -17,6 +17,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
@@ -376,9 +377,62 @@ def _walk_dicts(o):
 TMD_EVERY_MINUTES = 30   # เว็บกรมอุตุฯ ช้า/ล่มบ่อย ไม่ต้องยิงทุกรอบ
 
 
+# เว็บบางแห่ง (เช่น tmd.go.th) ตั้ง SSL ไม่ครบ: ไม่ส่งใบรับรองตัวกลาง (intermediate) มาด้วย
+# วิธีแก้แบบปลอดภัย: อ่าน URL ของใบตัวกลางจากใบรับรองของเว็บ (AIA) -> ดาวน์โหลดมาเติม
+# แล้วตรวจ chain เต็มจนถึง root ที่เครื่องเชื่อถือตามปกติ (ไม่ได้ปิดการตรวจ SSL)
+_AIA_HOSTS = ("tmd.go.th", "www.tmd.go.th", "data.tmd.go.th")
+_aia_ctx: dict = {}
+
+
+def _aia_context(host: str):
+    import socket
+    import ssl
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
+
+    if host in _aia_ctx:
+        return _aia_ctx[host]
+    peek = ssl.create_default_context()
+    peek.check_hostname = False
+    peek.verify_mode = ssl.CERT_NONE          # ใช้แค่ "หยิบใบรับรองมาอ่าน" ไม่ได้ส่งข้อมูลใดๆ
+    with socket.create_connection((host, 443), timeout=CFG["HTTP_TIMEOUT"]) as sock:
+        with peek.wrap_socket(sock, server_hostname=host) as tls:
+            der = tls.getpeercert(binary_form=True)
+    leaf = x509.load_der_x509_certificate(der)
+    aia = leaf.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_INFORMATION_ACCESS).value
+    urls = [d.access_location.value for d in aia
+            if d.access_method == AuthorityInformationAccessOID.CA_ISSUERS][:2]
+    pems = []
+    for u in urls:
+        with urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": UA}),
+                                    timeout=CFG["HTTP_TIMEOUT"]) as r:
+            raw = r.read()
+        try:
+            cert = x509.load_der_x509_certificate(raw)
+        except ValueError:
+            cert = x509.load_pem_x509_certificate(raw)
+        pems.append(cert.public_bytes(Encoding.PEM).decode())
+    if not pems:
+        raise RuntimeError("ไม่พบ URL ใบรับรองตัวกลาง (AIA)")
+    ctx = ssl.create_default_context()        # ยังตรวจ hostname + chain ถึง root ตามปกติ
+    ctx.load_verify_locations(cadata="".join(pems))
+    _aia_ctx[host] = ctx
+    return ctx
+
+
 def _get_text(url: str) -> str:
+    import ssl
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/xml,text/xml,*/*"})
-    with urllib.request.urlopen(req, timeout=CFG["HTTP_TIMEOUT"]) as r:
+    try:
+        with urllib.request.urlopen(req, timeout=CFG["HTTP_TIMEOUT"]) as r:
+            return r.read().decode("utf-8-sig", errors="replace")
+    except urllib.error.URLError as e:
+        host = urllib.parse.urlsplit(url).hostname or ""
+        if not (isinstance(e.reason, ssl.SSLCertVerificationError) and host in _AIA_HOSTS):
+            raise
+    ctx = _aia_context(host)
+    with urllib.request.urlopen(req, timeout=CFG["HTTP_TIMEOUT"], context=ctx) as r:
         return r.read().decode("utf-8-sig", errors="replace")
 
 
