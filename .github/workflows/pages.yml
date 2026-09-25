@@ -1,9 +1,9 @@
-# สร้างเว็บ Flood real แบบ static แล้ว deploy ขึ้น GitHub Pages ทุก 30 นาที
+# สร้างเว็บ Flood real แบบ static แล้ว deploy ขึ้น GitHub Pages ทุก 15 นาที
 name: Build & deploy site
 
 on:
   schedule:
-    - cron: "7,37 * * * *"      # ทุก 30 นาที (นาทีที่ 7 และ 37 เลี่ยงช่วงคิวแน่น)
+    - cron: "7,22,37,52 * * * *"   # ทุก 15 นาที (เลี่ยงนาทีที่ 0 ซึ่งคิวแน่น)
   workflow_dispatch:
   push:                         # push โค้ดขึ้น main -> สร้างเว็บใหม่ทันที
     branches: [main]
@@ -32,7 +32,8 @@ jobs:
         env:
           GISTDA_API_KEY: ${{ secrets.GISTDA_API_KEY }}
           BUS_DIR: ${{ runner.temp }}/bus
-          SITE_EVERY_MINUTES: "30"
+          SITE_EVERY_MINUTES: "15"
+          PREV_SITE_URL: https://mapoko11.github.io/Flood-Real   # ใช้ GISTDA รอบก่อน ไม่ยิงซ้ำทุก 15 นาที
           TZ: Asia/Bangkok          # เวลาไทย (เว็บ + ช่วง 72 ชม. ของ Traffy)
         run: python tools/build_static.py
       - uses: actions/configure-pages@v5

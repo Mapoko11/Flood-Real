@@ -26,7 +26,30 @@ import app as webapp  # noqa: E402  (import หลังตั้ง key)
 SITE = os.path.join(ROOT, "site")
 
 
+def seed_from_live_site() -> None:
+    """ดึงข้อมูลรอบก่อนจากเว็บที่ออนไลน์อยู่ มาเป็น cache ตั้งต้น
+    -> GISTDA (ชั่วโมงละครั้ง) และกรมอุตุฯ (30 นาที) ไม่ถูกยิงซ้ำทุก 15 นาที
+    ถ้าดึงไม่ได้ก็แค่ข้าม (รอบนั้นจะดึงสดทั้งหมดแทน)"""
+    base = os.environ.get("PREV_SITE_URL", "").rstrip("/")
+    if not base:
+        return
+    try:
+        prev = sources._get_json(base + "/data/latest.json")
+        periods = ((prev.get("gistda") or {}).get("periods") or {})
+        for p in sources.GISTDA_PERIODS:
+            if (periods.get(p) or {}).get("ok"):
+                fc = sources._get_json(f"{base}/data/gistda_{p}.json")
+                with open(sources.gistda_file(p), "w", encoding="utf-8") as f:
+                    json.dump(fc, f, ensure_ascii=False, separators=(",", ":"))
+        seed = {"gistda": {"configured": True, "periods": periods}, "tmd": prev.get("tmd") or {}}
+        sources.save_cache(seed)
+        print("  seed      ใช้ข้อมูล GISTDA/กรมอุตุฯ รอบก่อนจากเว็บที่ออนไลน์")
+    except Exception as e:  # noqa: BLE001
+        print(f"  seed      ข้าม ({type(e).__name__})")
+
+
 def main() -> int:
+    seed_from_live_site()
     data = sources.refresh_all()
     st = data.get("status") or {}
     for k, v in st.items():
