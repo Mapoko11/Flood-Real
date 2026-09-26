@@ -192,3 +192,8 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .rt-card summary{cursor:pointer;color:var(--accent)}
 .rt-card ol{margin:6px 0 0 18px;padding:0;line-height:1.6}
 @media (max-width:640px){ .rt-form{grid-template-columns:1fr} .rt-card .t{font-size:20px} }
+
+/* ถนนน้ำท่วม กทม. */
+.bma-pin{color:#fff;border:2px solid #fff;border-radius:6px;padding:1px 5px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px #000a;line-height:1.3}
+.bma-row{cursor:pointer}
+.bma-row:hover{background:rgba(59,130,246,.12)}

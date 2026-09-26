@@ -29,7 +29,9 @@ async function getRadar(){
 const WL = {1:["น้อยวิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["น้ำมาก","#3b82f6"],5:["ล้นตลิ่ง","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
 const RAIN = {0:["ไม่มีฝน","#64748b"],1:["เล็กน้อย","#a5f3fc"],2:["ปานกลาง","#38bdf8"],3:["หนัก","#22c55e"],4:["หนักมาก","#f97316"]};
 const DAM = {1:["วิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["มาก","#3b82f6"],5:["เกินความจุ","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
-const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy"};
+const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม."};
+const BMA = {flood:["น้ำท่วม","#ef4444"],minor:["ท่วมขังเล็กน้อย","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"],unknown:["ไม่ทราบ","#64748b"]};
+function bmaWet(p){ return p.state==="flood" || p.state==="minor"; }
 const TF_COLOR = {"รอรับเรื่อง":"#ef4444","กำลังดำเนินการ":"#f59e0b","ส่งต่อ":"#a855f7","เสร็จสิ้น":"#22c55e"};
 function tfColor(st){ return TF_COLOR[st] || "#94a3b8"; }
 function tfOpen(it){ return !/เสร็จสิ้น|ยกเลิก|ไม่เกี่ยวข้อง/.test(it.state||""); }
@@ -76,7 +78,7 @@ function renderAll(){
   if(!DATA) return;
   try{ prepSat(); }catch(e){ console.error(e); }
   $("#updated").textContent = DATA.updated_at ? "อัปเดต " + DATA.updated_at.replace("T"," ") : "ยังไม่มีข้อมูล (รอรอบแรก)";
-  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderSat, renderTraffy, renderFc]){
+  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderSat, renderTraffy, renderBma, renderFc]){
     try{ f(); }catch(e){ console.error(f.name, e); }   // ส่วนไหนพัง ส่วนอื่นยังแสดง
   }
 }
@@ -91,6 +93,7 @@ function renderKpis(){
     ["amber", dams.filter(d=>(d.pct||0)>80).length, "เขื่อนน้ำ >80%"],
     ["", cur ? (cur.provinces||[]).length : "–", "จังหวัดมีน้ำท่วม (ดาวเทียม " + PERIOD_TH[satPeriod] + ")"],
     ["", wl.length, "สถานีวัดระดับน้ำทั้งหมด"],
+    ["red", (DATA.bma&&DATA.bma.count) ? (DATA.bma.count.flood||0)+(DATA.bma.count.minor||0) : "–", "ถนน กทม. น้ำท่วม (จุดวัด)"],
     ["red", ((DATA.traffy||{}).items||[]).filter(tfOpen).length, `แจ้งปัญหาค้าง (Traffy ${fmt((DATA.traffy||{}).hours||72,0)} ชม.)`],
   ];
   $("#kpis").innerHTML = k.map(([c,v,l])=>`<div class="kpi ${c}"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join("");
@@ -111,13 +114,14 @@ function renderStatus(){
 function initMap(){
   map = L.map("map", {preferCanvas:true}).setView([13.2, 101.0], 6);
   setBase(basemap);
-  ["wl","rain","dam","sat","tf","tr"].forEach(n => layers[n] = L.layerGroup());
+  ["wl","rain","dam","sat","tf","bma","tr"].forEach(n => layers[n] = L.layerGroup());
   layers.tr.addTo(map);
   $("#legend").innerHTML =
     "<b>ระดับน้ำ:</b> " + [5,4,3,2,1].map(l=>`<span><i class="dot" style="background:${WL[l][1]}"></i>${WL[l][0]}</span>`).join(" ") +
     " &nbsp; <b>ฝน:</b> " + [4,3,2,1].map(l=>`<span><i class="dot" style="background:${RAIN[l][1]}"></i>${RAIN[l][0]}</span>`).join(" ") +
     " &nbsp; <span>▲ = เขื่อน</span> &nbsp; <b>Traffy:</b> " +
-    Object.entries(TF_COLOR).map(([k,c])=>`<span><i class="dot" style="background:${c};border-radius:2px"></i>${k}</span>`).join(" ");
+    Object.entries(TF_COLOR).map(([k,c])=>`<span><i class="dot" style="background:${c};border-radius:2px"></i>${k}</span>`).join(" ") +
+    " &nbsp; <b>ถนน กทม.:</b> " + ["flood","minor","normal"].map(k=>`<span><i class="dot" style="background:${BMA[k][1]}"></i>${BMA[k][0]}</span>`).join(" ");
 }
 
 /* ---------------- พื้นหลังแผนที่ ---------------- */
@@ -205,8 +209,30 @@ function renderMap(){
         iconSize:[12*sizeK,12*sizeK], iconAnchor:[6*sizeK,6*sizeK]});
       L.marker([t.lat,t.lon],{icon}).bindPopup(tfPopup(t),{maxWidth:260}).addTo(layers.tf);
     });
+  ((DATA.bma||{}).points||[]).filter(hasLL).filter(p=>p.state!=="down" && p.state!=="unknown")
+    .filter(p=>match(p,["name","road","district"]))
+    .filter(p=>!risk || bmaWet(p))
+    .sort((a,b)=>(bmaWet(a)?1:0)-(bmaWet(b)?1:0))
+    .forEach(p=>{
+      const c = (BMA[p.state]||BMA.unknown)[1];
+      let mk;
+      if(bmaWet(p)){
+        const icon = L.divIcon({className:"", html:`<div class="bma-pin" style="background:${c};font-size:${Math.round(12*sizeK)}px">${fmt(p.cm,0)} ซม.</div>`, iconSize:null, iconAnchor:[18,10]});
+        mk = L.marker([p.lat,p.lon],{icon, zIndexOffset:500});
+      } else {
+        mk = L.circleMarker([p.lat,p.lon],{radius:4*sizeK, color:"#fff", weight:1, fillColor:c, fillOpacity:.9});
+      }
+      mk.bindPopup(bmaPopup(p)).addTo(layers.bma);
+    });
   loadSat();
   syncLayers();
+}
+
+function bmaPopup(p){
+  return `<b>🚗 ${esc(p.name)}</b><br>${esc(p.road)} · เขต${esc(p.district)}<br>
+    ระดับน้ำบนถนน <b>${fmt(p.cm,1)} ซม.</b> ${pill(BMA,p.state)}${p.max_cm!=null&&bmaWet(p)?`<br>สูงสุดรอบนี้ ${fmt(p.max_cm,1)} ซม.`:""}
+    ${p.since?`<br>เริ่มท่วม ${esc(p.since.replace("T"," "))}`:""}<br>
+    <small>วัดเมื่อ ${esc((p.time||"-").replace("T"," "))} · สำนักการระบายน้ำ กทม.</small>`;
 }
 
 function loadSat(force){
@@ -230,7 +256,7 @@ function loadSat(force){
 }
 
 function syncLayers(){
-  const m = {wl:"#lyWl", rain:"#lyRain", dam:"#lyDam", sat:"#lySat", tf:"#lyTraffy"};
+  const m = {wl:"#lyWl", rain:"#lyRain", dam:"#lyDam", sat:"#lySat", tf:"#lyTraffy", bma:"#lyBma"};
   for(const [k,sel] of Object.entries(m)){
     if($(sel).checked) layers[k].addTo(map); else map.removeLayer(layers[k]);
   }
@@ -335,6 +361,30 @@ function renderTraffy(){
     document.querySelector('#tabs button[data-tab=map]').click();
     $("#lyTraffy").checked = true; syncLayers();
     setTimeout(()=>{ map.setView([t.lat,t.lon], 16); L.popup({maxWidth:260}).setLatLng([t.lat,t.lon]).setContent(tfPopup(t)).openOn(map); }, 120);
+  }));
+}
+
+function renderBma(){
+  const b = DATA.bma || {};
+  const st = (DATA.status||{}).bma;
+  if(b.configured===false){ $("#bmaInfo").textContent="ปิดการดึงข้อมูล กทม. อยู่ (BMA_FLOOD_ENABLED)"; return; }
+  if(!b.points){ $("#bmaInfo").textContent = st && !st.ok ? "ยังดึงข้อมูล กทม. ไม่ได้: "+st.error : "ยังไม่มีข้อมูล (รอรอบแรก)"; $("#bmaTable").innerHTML=""; return; }
+  const sel = $("#bmaShow").value;
+  const pts = b.points.filter(p=>match(p,["name","road","district"]))
+    .filter(p=> sel==="wet" ? bmaWet(p) : sel==="ok" ? (p.state!=="down" && p.state!=="unknown") : true);
+  const c = b.count||{};
+  $("#bmaInfo").innerHTML = `น้ำท่วม <b style="color:${BMA.flood[1]}">${c.flood||0}</b> · ท่วมขังเล็กน้อย <b style="color:${BMA.minor[1]}">${c.minor||0}</b> · ปกติ ${c.normal||0} · ขัดข้อง ${c.down||0} จุด` +
+    ` <span class="muted">· ดึงเมื่อ ${esc((b.at||"").replace("T"," "))}${st&&!st.ok?" (รอบล่าสุดดึงไม่ได้ ใช้ข้อมูลเดิม)":""} · <a href="${safeUrl(b.source)}" target="_blank" rel="noopener">สำนักการระบายน้ำ กทม.</a></span>`;
+  $("#bmaTable").innerHTML = `<thead><tr><th>จุดวัด</th><th>ถนน</th><th>เขต</th><th class="num">ระดับน้ำ (ซม.)</th><th>สถานะ</th><th>เริ่มท่วม</th><th>เวลาวัด</th></tr></thead><tbody>` +
+    (pts.length ? pts.map((p,i)=>`<tr class="bma-row" data-i="${i}"><td><b>${esc(p.name)}</b></td><td>${esc(p.road)}</td><td>${esc(p.district)}</td>
+      <td class="num"><b>${fmt(p.cm,1)}</b></td><td>${pill(BMA,p.state)}</td><td>${esc((p.since||"").slice(5,16).replace("T"," "))}</td><td>${esc((p.time||"").slice(11,16))}</td></tr>`).join("")
+      : `<tr><td colspan="7" class="muted">ไม่มีจุดน้ำท่วมถนนตอนนี้ 🎉</td></tr>`) + "</tbody>";
+  $("#bmaTable").querySelectorAll(".bma-row").forEach(el=>el.addEventListener("click",()=>{
+    const p = pts[Number(el.dataset.i)];
+    if(!p || !hasLL(p) || !map) return;
+    document.querySelector('#tabs button[data-tab=map]').click();
+    $("#lyBma").checked = true; syncLayers();
+    setTimeout(()=>{ map.setView([p.lat,p.lon], 16); L.popup().setLatLng([p.lat,p.lon]).setContent(bmaPopup(p)).openOn(map); }, 120);
   }));
 }
 
@@ -647,8 +697,9 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
   document.querySelectorAll(".seg[data-seg=sat] button").forEach(x=>x.classList.toggle("active", x.dataset.p===satPeriod));
   renderKpis(); renderSat(); if(map) loadSat(true);
 }));
-["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy"].forEach(s=>$(s).addEventListener("change", syncLayers));
+["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy","#lyBma"].forEach(s=>$(s).addEventListener("change", syncLayers));
 $("#tfState").addEventListener("change", renderTraffy);
+$("#bmaShow").addEventListener("change", renderBma);
 $("#onlyRisk").addEventListener("change", renderMap);
 if(STATIC){ $("#btnRefresh").style.display="none"; }
 $("#btnRefresh").addEventListener("click", async ()=>{

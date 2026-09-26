@@ -634,6 +634,93 @@ def fetch_traffy() -> dict:
 
 # ---------------------------------------------------------------- รวมทุกแหล่ง
 
+# ---------------------------------------------------------------- กทม. น้ำท่วมถนน (สำนักการระบายน้ำ)
+# ต้นทาง: หน้า https://weather.bangkok.go.th/Flood/  (ไม่มี API ทางการ ใช้ endpoint เดียวกับหน้าเว็บ)
+# เซิร์ฟเวอร์ กทม. มีตัวกันยิงถี่ (ตอบ 403) -> ดึงห่างอย่างน้อย BMA_EVERY_MINUTES และยิงครั้งเดียวต่อรอบ
+BMA_EVERY_MINUTES = 10
+_BMA_MS = re.compile(r"/Date\((-?\d+)\)/")
+
+
+def _bma_time(v) -> str:
+    m = _BMA_MS.search(str(v or ""))
+    if not m:
+        return ""
+    return datetime.fromtimestamp(int(m.group(1)) / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _bma_state(txt: str) -> str:
+    t = str(txt or "")
+    if "ขัดข้อง" in t or "ปิดระบบ" in t:
+        return "down"
+    if "เล็กน้อย" in t:
+        return "minor"
+    if "ท่วม" in t:
+        return "flood"
+    if "ปกติ" in t:
+        return "normal"
+    return "unknown"
+
+
+def fetch_bma() -> dict:
+    """จุดวัดน้ำท่วมถนน กทม. (ระดับน้ำบนผิวถนน หน่วย ซม.)"""
+    if not CFG.get("BMA_FLOOD_ENABLED", True):
+        return {"configured": False, "points": []}
+    old = load_cache().get("bma") or {}
+    if old.get("points") is not None and _minutes_since(old.get("at")) < BMA_EVERY_MINUTES:
+        return old
+    url = CFG.get("BMA_FLOOD_URL") or "https://weather.bangkok.go.th/Flood/PageMap/GetData?id=0"
+    proxy = (CFG.get("BMA_PROXY_URL") or "").strip()
+    js, via, errs = None, "", []
+    if proxy:
+        try:
+            js, via = _get_json(proxy), "proxy"
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"proxy {type(e).__name__}: {e}"[:120])
+    if js is None:
+        try:
+            js, via = _get_json(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/140.0 Safari/537.36 FloodReal/1.0",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://weather.bangkok.go.th/Flood/",
+            }), "direct"
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"direct {type(e).__name__}: {e}"[:120])
+            raise RuntimeError(" | ".join(errs)) from None
+    rows = js.get("dtTbl") if isinstance(js, dict) else js
+    if not isinstance(rows, list):
+        raise ValueError("รูปแบบข้อมูล กทม. เปลี่ยนไป (ไม่พบ dtTbl)")
+    pts = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        lat, lon = _num(r.get("latitude")), _num(r.get("longitude"))
+        state = _bma_state(r.get("chkStatustxt"))
+        tunnel = r.get("typesite") not in (None, 1, "1")
+        pts.append({
+            "code": str(r.get("flood_code") or "")[:20],
+            "name": str(r.get("shortname") or r.get("flood_shortname") or r.get("flood_name") or "").strip()[:120],
+            "road": str(r.get("road_name") or "").strip()[:80],
+            "district": str(r.get("districtName") or "").strip()[:40],
+            "lat": lat, "lon": lon,
+            "cm": _num(r.get("flood")),
+            "max_cm": _num(r.get("flood_max")),
+            "state": state,
+            "status_txt": str(r.get("chkStatustxt") or "")[:30],
+            "since": _bma_time(r.get("flood_start")) if state in ("flood", "minor") else "",
+            "time": _bma_time(r.get("site_timestamp")),
+            "tunnel": bool(tunnel),
+        })
+    if not pts:
+        raise ValueError("กทม. ส่งข้อมูลว่าง")
+    order = {"flood": 0, "minor": 1, "normal": 2, "unknown": 3, "down": 4}
+    pts.sort(key=lambda p: (order.get(p["state"], 9), -(p["cm"] or 0)))
+    count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
+    return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
+            "source": "https://weather.bangkok.go.th/Flood/"}
+
+
 SOURCES = {
     "waterlevel": fetch_waterlevel,
     "rain": fetch_rain,
@@ -641,6 +728,7 @@ SOURCES = {
     "gistda": fetch_gistda,
     "tmd": fetch_tmd,
     "traffy": fetch_traffy,
+    "bma": fetch_bma,
 }
 
 

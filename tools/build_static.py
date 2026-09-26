@@ -41,9 +41,10 @@ def seed_from_live_site() -> None:
                 fc = sources._get_json(f"{base}/data/gistda_{p}.json")
                 with open(sources.gistda_file(p), "w", encoding="utf-8") as f:
                     json.dump(fc, f, ensure_ascii=False, separators=(",", ":"))
-        seed = {"gistda": {"configured": True, "periods": periods}, "tmd": prev.get("tmd") or {}}
+        seed = {"gistda": {"configured": True, "periods": periods}, "tmd": prev.get("tmd") or {},
+                "bma": prev.get("bma") or {}}
         sources.save_cache(seed)
-        print("  seed      ใช้ข้อมูล GISTDA/กรมอุตุฯ รอบก่อนจากเว็บที่ออนไลน์")
+        print("  seed      ใช้ข้อมูล GISTDA/กรมอุตุฯ/กทม. รอบก่อนจากเว็บที่ออนไลน์")
     except Exception as e:  # noqa: BLE001
         print(f"  seed      ข้าม ({type(e).__name__})")
 

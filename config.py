@@ -36,6 +36,12 @@ DEFAULTS = {
     "TRAFFY_URL": "https://publicapi.traffy.in.th/teamchadchart-stat-api/geojson/v1",
     "TRAFFY_HOURS": 72,            # ย้อนหลังกี่ชั่วโมง
 
+    # ---- กทม. จุดวัดน้ำท่วมถนน (สำนักการระบายน้ำ) — ไม่ต้องใช้ key ----
+    "BMA_FLOOD_ENABLED": True,
+    "BMA_FLOOD_URL": "https://weather.bangkok.go.th/Flood/PageMap/GetData?id=0",
+    # ดึงผ่าน Cloudflare Worker ก่อน (ใช้ IP คนละชุด + cache 10 นาที) ถ้าไม่ได้ค่อยดึงตรง  ใส่ "" = ดึงตรงอย่างเดียว
+    "BMA_PROXY_URL": "https://floodreal-proxy.cheabracha0920.workers.dev/bma",
+
     # ---- TomTom Traffic (รถติด) — สมัคร key ฟรีที่ developer.tomtom.com ----
     "TOMTOM_API_KEY": "",
     "TRAFFIC_CACHE_MINUTES": 5,    # ถนนเดิมค้นซ้ำภายในกี่นาทีใช้ผลเดิม (ประหยัดโควตา 2,500/เดือน)
@@ -45,8 +51,15 @@ DEFAULTS = {
     "ALERT_WL_PERCENT": 100,       # ระดับน้ำ >= % ความจุลำน้ำ (100 = ล้นตลิ่ง)
     "ALERT_RAIN_MM": 90,           # ฝน 24 ชม. >= mm (กรมอุตุฯ: >90 = หนักมาก)
     "ALERT_DAM_PERCENT": 100,      # เขื่อน >= % ความจุ
-    "ALERT_REPEAT_HOURS": 6,       # สถานีเดิมเตือนซ้ำได้อีกเมื่อผ่านไปกี่ ชม.
+    "ALERT_ROAD_CM": 30,           # ถนน กทม. น้ำท่วม >= ซม. (30 ซม. = รถเก๋งเริ่มลำบาก)
+    "ALERT_REPEAT_HOURS": 12,      # สถานีเดิมเตือนซ้ำได้อีกเมื่อผ่านไปกี่ ชม.
     "ALERT_MAX_ITEMS": 15,         # รายการสูงสุดต่อ 1 ข้อความ (กัน Telegram ยาวเกิน)
+    "ALERT_KINDS": ["wl", "dam", "road"],   # เตือนด่วนเฉพาะ: wl=น้ำล้นตลิ่ง, dam=เขื่อนเกินความจุ, road=ถนน กทม. ท่วม >= ALERT_ROAD_CM (ฝนหนักดูในสรุปทุก 4 ชม.) ใส่ "rain" เพื่อเตือนฝนด้วย
+    "ALERT_MIN_GAP_MINUTES": 60,    # เตือนด่วนห่างกันอย่างน้อยกี่นาที (จุดใหม่ระหว่างนั้นจะรวมไปส่งรอบถัดไป)
+
+    # ---- สรุปสถานการณ์ส่งเข้า Guardian/Telegram ตามเวลา (ทุก 4 ชม.) ----
+    "SUMMARY_ENABLED": True,
+    "SUMMARY_HOURS": [2, 6, 10, 14, 18, 22],   # ชั่วโมงที่ส่ง (เวลาไทย) ลบชั่วโมงที่ไม่อยากให้เด้งออกได้
 
     # ---- ตู้จดหมายกลาง (_bus) ----
     "BUS_NAME": "floodreal",

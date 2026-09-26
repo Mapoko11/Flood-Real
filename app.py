@@ -19,7 +19,7 @@ import sources
 import traffic
 from config import CFG
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
@@ -39,6 +39,10 @@ def _cycle() -> dict:
     except Exception as e:  # noqa: BLE001
         _worker_state["last_alert"] = {"error": str(e)}
     alerts.heartbeat(data)
+    try:
+        _worker_state["summary"] = alerts.periodic_summary(data)
+    except Exception as e:  # noqa: BLE001
+        _worker_state["summary"] = f"error: {e}"
     _worker_state["last_run"] = data.get("updated_at", "")
     return data
 
@@ -112,7 +116,8 @@ def build_payload() -> dict:
     d["gistda"] = {"configured": g.get("configured", False),
                    "periods": g.get("periods") or {}}   # cache เก่า (ก่อนมีหลายช่วง) จะได้ {} แทน
     d["thresholds"] = {"wl": CFG["ALERT_WL_PERCENT"], "rain": CFG["ALERT_RAIN_MM"],
-                       "dam": CFG["ALERT_DAM_PERCENT"]}
+                       "dam": CFG["ALERT_DAM_PERCENT"],
+                       "road": CFG.get("ALERT_ROAD_CM", 30)}
     d["worker"] = _worker_state
     return d
 

@@ -32,6 +32,17 @@ const ipHits = new Map();   // best-effort ต่อ isolate (ไม่เปล
 class TrafficError extends Error {}
 
 export default {
+  // Cron Trigger (ตั้งใน Cloudflare: Settings -> Trigger events -> Cron "*/15 * * * *")
+  // สั่ง GitHub Actions สร้างเว็บใหม่ทุก 15 นาที — แทน cron ของ GitHub ที่มักเลื่อน/ข้ามรอบ
+  // ต้องมี Secret GH_TOKEN (fine-grained token: repo Flood-Real, สิทธิ์ Actions: Read and write)
+  async scheduled(event, env, ctx) {
+    // บันทึกว่า cron ทำงานจริง (ก่อนเรียก GitHub) เพื่อแยกว่า "cron ไม่ทำงาน" หรือ "สั่ง GitHub ไม่ผ่าน"
+    ctx.waitUntil((async () => {
+      try { await env.COUNTER.put("cron:last", JSON.stringify({ at: nowTh(), cron: event.cron || "" }), { expirationTtl: 7 * 86400 }); } catch (e) {}
+      await dispatchBuild(env, "cron");
+    })());
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const allowed = (env.ALLOWED_ORIGIN || "https://mapoko11.github.io").replace(/\/$/, "");
@@ -46,13 +57,29 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: cors });
     if (request.method !== "GET") return json({ ok: false, error: "method" }, 405, cors);
 
+    // ข้อมูลน้ำท่วมถนน กทม. (ข้อมูลสาธารณะ) — เปิดให้ server ในเครื่อง/GitHub Actions เรียกได้ด้วย
+    // ต้นทางถูกเรียกไม่เกิน 1 ครั้ง / 10 นาที ไม่ว่าจะมีคนเรียกกี่ครั้ง (cache)
+    if (url.pathname === "/bma") return await bma(env, ctx, cors);
+
     // รับเฉพาะเว็บที่อนุญาต (fetch ส่ง Origin, <img> ของ tile ส่ง Referer)
     const fromAllowed = origin === allowed || referer.startsWith(allowed + "/");
     if (!fromAllowed && url.pathname !== "/health") return json({ ok: false, error: "ไม่อนุญาต" }, 403, cors);
 
     try {
       if (url.pathname === "/health") return json({ ok: true }, 200, cors);
-      if (url.pathname === "/usage") return json({ ok: true, day: today(), ...(await usage(env)) }, 200, cors);
+      if (url.pathname === "/usage") return json({ ok: true, day: today(), ...(await usage(env)),
+        last_build: JSON.parse((await env.COUNTER.get("dispatch:last")) || "null"),
+        last_cron: JSON.parse((await env.COUNTER.get("cron:last")) || "null"),
+        gh_token: !!env.GH_TOKEN }, 200, cors);
+
+      // ทดสอบสั่งสร้างเว็บทันที (เฉพาะจากเว็บที่อนุญาต, ได้ 1 ครั้ง / 5 นาที)
+      if (url.pathname === "/build-now") {
+        const lastAt = await env.COUNTER.get("buildnow:lock");
+        if (lastAt) return json({ ok: false, error: "เพิ่งสั่งไป รอ 5 นาที" }, 429, cors);
+        await env.COUNTER.put("buildnow:lock", "1", { expirationTtl: 300 });
+        const st = await dispatchBuild(env, "manual");
+        return json({ ok: st.status === "ok", ...st }, 200, cors);
+      }
 
       const tm = url.pathname.match(/^\/tile\/(\d+)\/(\d+)\/(\d+)\.png$/);
       if (tm) return await tile(env, ctx, +tm[1], +tm[2], +tm[3], cors);
@@ -289,4 +316,68 @@ async function tile(env, ctx, z, x, y, cors) {
   const buf = await r.arrayBuffer();
   ctx.waitUntil(caches.default.put(key, new Response(buf, { headers: { "Content-Type": "image/png", "Cache-Control": "max-age=120" } })));
   return new Response(buf, { headers: { ...cors, "Content-Type": "image/png", "Cache-Control": "public, max-age=120" } });
+}
+
+/* ---------------- สั่ง GitHub สร้างเว็บใหม่ (ใช้กับ Cron Trigger) ---------------- */
+
+async function dispatchBuild(env, by = "cron") {
+  const repo = env.GH_REPO || "Mapoko11/Flood-Real";
+  const wf = env.GH_WORKFLOW || "pages.yml";
+  let status = "no-token", detail = "";
+  if (env.GH_TOKEN) {
+    try {
+      const r = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${wf}/dispatches`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${String(env.GH_TOKEN).trim()}`,
+          "Accept": "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "FloodReal-Worker/1.0",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ref: "main" }),
+      });
+      status = r.status === 204 ? "ok" : `HTTP ${r.status}`;
+      if (r.status !== 204) detail = (await r.text()).slice(0, 200);   // ข้อความจาก GitHub (ไม่มี token)
+    } catch (e) {
+      status = "error";
+      detail = String(e && e.message || e).slice(0, 200);
+    }
+  }
+  const rec = { at: nowTh(), by, status, detail };
+  try { await env.COUNTER.put("dispatch:last", JSON.stringify(rec), { expirationTtl: 7 * 86400 }); } catch (e) {}
+  return rec;
+}
+
+/* ---------------- น้ำท่วมถนน กทม. (สำนักการระบายน้ำ) ---------------- */
+
+async function bma(env, ctx, cors) {
+  const key = new Request("https://floodreal-cache.local/bma");
+  const hit = await caches.default.match(key);
+  if (hit) return new Response(hit.body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "X-Bma": "cache" } });
+  let body = null, status = "ok";
+  try {
+    const r = await fetch("https://weather.bangkok.go.th/Flood/PageMap/GetData?id=0", {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://weather.bangkok.go.th/Flood/",
+      },
+      cf: { cacheTtl: 0 },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const t = await r.text();
+    const j = JSON.parse(t);
+    if (!j || !Array.isArray(j.dtTbl)) throw new Error("no dtTbl");
+    body = t;
+    ctx.waitUntil(env.COUNTER.put("bma:last", t, { expirationTtl: 2 * 86400 }));
+  } catch (e) {
+    status = "stale: " + String(e && e.message || e).slice(0, 80);
+    body = await env.COUNTER.get("bma:last");
+    if (!body) return json({ ok: false, error: status }, 502, cors);
+  }
+  const ttl = status === "ok" ? 600 : 300;   // พังแล้วรอ 5 นาทีค่อยลองต้นทางใหม่
+  ctx.waitUntil(caches.default.put(key, new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${ttl}` } })));
+  return new Response(body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "X-Bma": status } });
 }
