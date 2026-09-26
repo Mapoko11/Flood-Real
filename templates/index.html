@@ -34,7 +34,7 @@
   <button data-tab="rain">ฝน 24 ชม.</button>
   <button data-tab="dam">เขื่อน</button>
   <button data-tab="sat">น้ำท่วม (ดาวเทียม)</button>
-  <button data-tab="bma">🚗 ถนนน้ำท่วม กทม.</button>
+  <button data-tab="bma">🚗 น้ำท่วม กทม.</button>
   <button data-tab="traffy">แจ้งปัญหา (Traffy)</button>
   <button data-tab="traffic">🚗 รถติด</button>
   <button data-tab="fc">พยากรณ์ / เตือนภัย</button>
@@ -51,6 +51,7 @@
         <button data-p="1day" class="active">ล่าสุด</button><button data-p="3days">3 วัน</button><button data-p="7days">7 วัน</button><button data-p="30days">30 วัน</button>
       </div>
       <label><input type="checkbox" id="lyBma" checked> ถนนน้ำท่วม กทม.</label>
+      <label><input type="checkbox" id="lyCanal" checked> ระดับน้ำคลอง กทม.</label>
       <label><input type="checkbox" id="lyTraffy" checked> แจ้งปัญหา (Traffy)</label>
       <label><input type="checkbox" id="lyRadar"> เรดาร์ฝน (RainViewer)</label>
       <label id="lyFlowBox"><input type="checkbox" id="lyFlow"> สีการจราจร (TomTom)</label>
@@ -120,6 +121,9 @@
       <span id="bmaInfo" class="muted"></span>
     </div>
     <div class="table-wrap"><table id="bmaTable"></table></div>
+    <h3 class="tr-h">🏙️ ระดับน้ำในคลอง กทม. (เฉพาะสถานีที่ถึงเกณฑ์)</h3>
+    <div class="filters"><span id="canalInfo" class="muted"></span></div>
+    <div class="table-wrap"><table id="canalTable"></table></div>
     <div class="muted tr-foot">ระดับน้ำบนผิวถนนจากสถานีวัดของสำนักการระบายน้ำ กทม. · ≥10 ซม. รถเล็กควรเลี่ยง · ≥30 ซม. รถเก๋งเสี่ยงน้ำเข้า · สถานีขัดข้องไม่มีข้อมูล (ถนนนั้นอาจยังท่วมได้)</div>
   </section>
 

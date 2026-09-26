@@ -721,6 +721,94 @@ def fetch_bma() -> dict:
             "source": "https://weather.bangkok.go.th/Flood/"}
 
 
+
+# ---------------------------------------------------------------- กทม. ระดับน้ำในคลอง (สำนักการระบายน้ำ)
+# ต้นทาง: หน้า https://weather.bangkok.go.th/water  (POST /water/PageMap/GoogleMap) — ดึงผ่าน Worker เป็นหลัก
+CANAL_STALE_MINUTES = 30      # เว็บ กทม. ถือว่า "การสื่อสารขัดข้อง" ถ้าข้อมูลเก่ากว่า 30 นาที
+
+
+def _post_form_json(url: str, form: dict, headers: dict | None = None):
+    data = urllib.parse.urlencode(form).encode()
+    h = {"User-Agent": UA, "Accept": "application/json",
+         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, data=data, headers=h, method="POST")
+    with urllib.request.urlopen(req, timeout=CFG["HTTP_TIMEOUT"]) as r:
+        return json.loads(r.read().decode("utf-8-sig"))
+
+
+def _canal_state(r: dict) -> str:
+    age = _num(r.get("datediffnow"))
+    lv = [(_num(r.get(a)), _num(r.get(w)), _num(r.get(c))) for a, w, c in (
+        ("wl_in", "warning", "critical"),
+        ("wl_out01", "warning_out01", "critical_out01"),
+        ("wl_out02", "warning_out02", "critical_out02"))]
+    if (age is not None and age > CANAL_STALE_MINUTES) or all(v is None for v, _, _ in lv):
+        return "down"
+    if any(v is not None and c is not None and v >= c for v, _, c in lv):
+        return "critical"
+    if any(v is not None and w is not None and v >= w for v, w, _ in lv):
+        return "warning"
+    return "normal"
+
+
+def fetch_bma_canal() -> dict:
+    """ระดับน้ำในคลอง กทม. (ม.รทก.) + เกณฑ์เฝ้าระวัง/วิกฤต ของแต่ละสถานี"""
+    if not CFG.get("BMA_FLOOD_ENABLED", True):
+        return {"configured": False, "points": []}
+    old = load_cache().get("bma_canal") or {}
+    if old.get("points") is not None and _minutes_since(old.get("at")) < BMA_EVERY_MINUTES:
+        return old
+    proxy = (CFG.get("BMA_PROXY_URL") or "").strip()
+    rows, via, errs = None, "", []
+    if proxy:
+        try:
+            rows, via = _get_json(proxy.rstrip("/") + "-canal"), "proxy"
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"proxy {type(e).__name__}: {e}"[:120])
+    if rows is None:
+        try:
+            rows, via = _post_form_json("https://weather.bangkok.go.th/water/PageMap/GoogleMap",
+                                        {"payload": "TEST_DATA_GOES_HERE"}, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0 Safari/537.36 FloodReal/1.0",
+                "X-Requested-With": "XMLHttpRequest", "Referer": "https://weather.bangkok.go.th/water/"}), "direct"
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"direct {type(e).__name__}: {e}"[:120])
+            raise RuntimeError(" | ".join(errs)) from None
+    if not isinstance(rows, list):
+        raise ValueError("รูปแบบข้อมูลคลอง กทม. เปลี่ยนไป")
+    pts = []
+    for r in rows:
+        if not isinstance(r, dict) or r.get("adjust") not in (1, "1"):
+            continue                      # adjust 0/2 = สถานีปิดปรับปรุง (หน้าเว็บ กทม. ก็ไม่แสดงบนแผนที่)
+        gates = [r.get(f"watergate0{i}") for i in range(1, 7)]
+        pts.append({
+            "code": str(r.get("water_code") or "")[:20],
+            "name": str(r.get("water_shortname") or r.get("water_name") or "").strip().rstrip("*").strip()[:120],
+            "full": str(r.get("water_name") or "").strip().rstrip("*").strip()[:160],
+            "district": str(r.get("district_name") or "").strip()[:40],
+            "lat": _num(r.get("latitude")), "lon": _num(r.get("longitude")),
+            "wl_in": _num(r.get("wl_in")), "wl_out1": _num(r.get("wl_out01")), "wl_out2": _num(r.get("wl_out02")),
+            "warn": _num(r.get("warning")), "crit": _num(r.get("critical")),
+            "warn_out1": _num(r.get("warning_out01")), "crit_out1": _num(r.get("critical_out01")),
+            "bank_l": _num(r.get("left_bank")), "bank_r": _num(r.get("right_bank")),
+            "max_today": _num(r.get("max_in_day")),
+            "gates": [g for g in gates if g not in (None, "", "-")][:6],
+            "time": str(r.get("site_timestampTH") or "")[:20],
+            "age_min": _num(r.get("datediffnow")),
+            "state": _canal_state(r),
+            "status_txt": str(r.get("txtStatus") or "")[:40],
+        })
+    if not pts:
+        raise ValueError("กทม. ส่งข้อมูลคลองว่าง")
+    order = {"critical": 0, "warning": 1, "normal": 2, "down": 3}
+    pts.sort(key=lambda p: (order.get(p["state"], 9), p["name"]))
+    count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
+    return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
+            "source": "https://weather.bangkok.go.th/water"}
+
+
 SOURCES = {
     "waterlevel": fetch_waterlevel,
     "rain": fetch_rain,
@@ -729,6 +817,7 @@ SOURCES = {
     "tmd": fetch_tmd,
     "traffy": fetch_traffy,
     "bma": fetch_bma,
+    "bma_canal": fetch_bma_canal,
 }
 
 

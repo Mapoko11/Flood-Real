@@ -228,6 +228,12 @@ def build_summary(data: dict) -> str:
         lines.append(f"🚗 ถนน กทม. น้ำท่วม: {len(fl)} จุด (จากสถานีที่ใช้งานได้)")
         for p in fl[:5]:
             lines.append(f"   • {p.get('name')} {_fmt(p.get('cm'), 0)} ซม.")
+    cn = (data.get("bma_canal") or {}).get("points")
+    if cn is not None:
+        crit = [p for p in cn if p.get("state") == "critical"]
+        warn = [p for p in cn if p.get("state") == "warning"]
+        lines.append(f"🏙️ คลอง กทม.: ถึงระดับวิกฤต {len(crit)} / เฝ้าระวัง {len(warn)} สถานี"
+                     + (" — " + ", ".join(p.get("name", "") for p in crit[:4]) if crit else ""))
     tf = (data.get("traffy") or {}).get("items") or []
     if tf:
         open_n = sum(1 for t in tf if not any(k in str(t.get("state", "")) for k in ("เสร็จสิ้น", "ยกเลิก", "ไม่เกี่ยวข้อง")))

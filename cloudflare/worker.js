@@ -60,6 +60,9 @@ export default {
     // ข้อมูลน้ำท่วมถนน กทม. (ข้อมูลสาธารณะ) — เปิดให้ server ในเครื่อง/GitHub Actions เรียกได้ด้วย
     // ต้นทางถูกเรียกไม่เกิน 1 ครั้ง / 10 นาที ไม่ว่าจะมีคนเรียกกี่ครั้ง (cache)
     if (url.pathname === "/bma") return await bma(env, ctx, cors);
+    if (url.pathname === "/bma-canal") return await bma(env, ctx, cors, "canal");
+    // อ่านหน้า "ระดับน้ำในคลอง" ของ กทม. ผ่าน Worker (จำกัดเฉพาะ path /water... เท่านั้น, cache 10 นาที)
+    if (url.pathname === "/bkk") return await bkk(url.searchParams.get("p") || "", ctx, cors);
 
     // รับเฉพาะเว็บที่อนุญาต (fetch ส่ง Origin, <img> ของ tile ส่ง Referer)
     const fromAllowed = origin === allowed || referer.startsWith(allowed + "/");
@@ -351,33 +354,63 @@ async function dispatchBuild(env, by = "cron") {
 
 /* ---------------- น้ำท่วมถนน กทม. (สำนักการระบายน้ำ) ---------------- */
 
-async function bma(env, ctx, cors) {
-  const key = new Request("https://floodreal-cache.local/bma");
+// แหล่งข้อมูล กทม. ที่อนุญาต (ตายตัว ไม่รับ URL จากผู้ใช้)
+const BMA_SRC = {
+  flood: { url: "https://weather.bangkok.go.th/Flood/PageMap/GetData?id=0", referer: "https://weather.bangkok.go.th/Flood/",
+           ok: (j) => j && Array.isArray(j.dtTbl) },
+  canal: { url: "https://weather.bangkok.go.th/water/PageMap/GoogleMap", referer: "https://weather.bangkok.go.th/water/",
+           method: "POST", body: "payload=TEST_DATA_GOES_HERE", ok: (j) => Array.isArray(j) && j.length > 0 },
+};
+
+async function bma(env, ctx, cors, name = "flood") {
+  const src = BMA_SRC[name];
+  const key = new Request("https://floodreal-cache.local/bma-" + name);
+  const kvKey = name === "flood" ? "bma:last" : "bma:" + name;
   const hit = await caches.default.match(key);
   if (hit) return new Response(hit.body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "X-Bma": "cache" } });
   let body = null, status = "ok";
   try {
-    const r = await fetch("https://weather.bangkok.go.th/Flood/PageMap/GetData?id=0", {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": "https://weather.bangkok.go.th/Flood/",
-      },
-      cf: { cacheTtl: 0 },
-    });
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
+      "Accept": "application/json, text/javascript, */*; q=0.01",
+      "X-Requested-With": "XMLHttpRequest",
+      "Referer": src.referer,
+    };
+    if (src.body) headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8";
+    const r = await fetch(src.url, { method: src.method || "GET", headers, body: src.body, cf: { cacheTtl: 0 } });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const t = await r.text();
-    const j = JSON.parse(t);
-    if (!j || !Array.isArray(j.dtTbl)) throw new Error("no dtTbl");
+    if (!src.ok(JSON.parse(t))) throw new Error("รูปแบบข้อมูลเปลี่ยน");
     body = t;
-    ctx.waitUntil(env.COUNTER.put("bma:last", t, { expirationTtl: 2 * 86400 }));
+    ctx.waitUntil(env.COUNTER.put(kvKey, t, { expirationTtl: 2 * 86400 }));
   } catch (e) {
     status = "stale: " + String(e && e.message || e).slice(0, 80);
-    body = await env.COUNTER.get("bma:last");
+    body = await env.COUNTER.get(kvKey);
     if (!body) return json({ ok: false, error: status }, 502, cors);
   }
   const ttl = status === "ok" ? 600 : 300;   // พังแล้วรอ 5 นาทีค่อยลองต้นทางใหม่
   ctx.waitUntil(caches.default.put(key, new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${ttl}` } })));
   return new Response(body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "X-Bma": status } });
+}
+
+async function bkk(p, ctx, cors) {
+  if (!/^\/water(\/[A-Za-z0-9_.\/-]{0,80})?(\?[A-Za-z0-9=&_.%-]{0,120})?$/i.test(p))
+    return json({ ok: false, error: "path ไม่อนุญาต" }, 400, cors);
+  const key = new Request("https://floodreal-cache.local/bkk" + p);
+  const hit = await caches.default.match(key);
+  if (hit) return new Response(hit.body, { headers: { ...cors, "Content-Type": hit.headers.get("Content-Type") || "text/plain" } });
+  const r = await fetch("https://weather.bangkok.go.th" + p, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
+      "Accept": "application/json, text/javascript, text/html, */*; q=0.01",
+      "X-Requested-With": "XMLHttpRequest",
+      "Referer": "https://weather.bangkok.go.th/water",
+    },
+  });
+  let ct = r.headers.get("Content-Type") || "text/plain";
+  if (!/json/i.test(ct)) ct = "text/plain; charset=utf-8";   // ไม่ให้หน้า HTML ของเว็บอื่นรันบนโดเมนเรา
+  const body = (await r.text()).slice(0, 3000000);
+  if (!r.ok) return json({ ok: false, error: `HTTP ${r.status}` }, 502, cors);
+  ctx.waitUntil(caches.default.put(key, new Response(body, { headers: { "Content-Type": ct, "Cache-Control": "max-age=600" } })));
+  return new Response(body, { headers: { ...cors, "Content-Type": ct } });
 }

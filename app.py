@@ -19,7 +19,7 @@ import sources
 import traffic
 from config import CFG
 
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
@@ -208,6 +208,31 @@ def api_traffic_tile(z, x, y):
     resp = app.response_class(data, mimetype="image/png")
     resp.headers["Cache-Control"] = "public, max-age=120"
     return resp
+
+
+def _norm_th(t: str) -> str:
+    import re as _re
+    t = str(t or "").lower()
+    t = _re.sub(r"ถนน|ถ\.|ซอย|ซ\.|แยก|\s+|[()]", "", t)
+    return t.replace("งามวงค์วาน", "งามวงศ์วาน")
+
+
+@app.get("/api/road-flood")
+def api_road_flood():
+    """น้ำท่วมถนน กทม. (จาก cache) — q ว่าง = ทุกจุดที่ท่วม, q = ค้นชื่อถนน/จุด/เขต (ให้ Guardian ใช้)"""
+    b = sources.load_cache().get("bma") or {}
+    st = (sources.load_cache().get("status") or {}).get("bma") or {}
+    pts = b.get("points")
+    if pts is None:
+        return jsonify({"ok": False, "error": "ยังไม่มีข้อมูลน้ำท่วมถนน กทม. " + (st.get("error") or "")[:150]})
+    q = _norm_th(request.args.get("q", ""))[:60]
+    if q:
+        hit = [p for p in pts if q in _norm_th(p.get("name")) or q in _norm_th(p.get("road"))
+               or q in _norm_th(p.get("district"))]
+    else:
+        hit = [p for p in pts if p.get("state") in ("flood", "minor")]
+    return jsonify({"ok": True, "at": b.get("at"), "count": b.get("count"), "query": request.args.get("q", ""),
+                    "points": hit[:60], "stale": not st.get("ok", False)})
 
 
 @app.get("/api/traffic-usage")

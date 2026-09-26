@@ -42,7 +42,7 @@ def seed_from_live_site() -> None:
                 with open(sources.gistda_file(p), "w", encoding="utf-8") as f:
                     json.dump(fc, f, ensure_ascii=False, separators=(",", ":"))
         seed = {"gistda": {"configured": True, "periods": periods}, "tmd": prev.get("tmd") or {},
-                "bma": prev.get("bma") or {}}
+                "bma": prev.get("bma") or {}, "bma_canal": prev.get("bma_canal") or {}}
         sources.save_cache(seed)
         print("  seed      ใช้ข้อมูล GISTDA/กรมอุตุฯ/กทม. รอบก่อนจากเว็บที่ออนไลน์")
     except Exception as e:  # noqa: BLE001
