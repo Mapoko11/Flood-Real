@@ -49,6 +49,7 @@ DEFAULTS = {
     # ---- Floodboard (floodboard.org) เส้นถนนมีน้ำ — open data ไม่ต้องใช้ key ----
     "FLOODBOARD_ENABLED": True,
     "FLOODBOARD_URL": "https://floodboard.org/api/export/roads.geojson",
+    "FLOODBOARD_FALLBACK_URL": "https://mapoko11.github.io/Flood-Real/data/latest.json",   # ใช้เมื่อเครือข่ายเข้า floodboard.org ไม่ได้
 
     # ---- TomTom Traffic (รถติด) — สมัคร key ฟรีที่ developer.tomtom.com ----
     "TOMTOM_API_KEY": "",

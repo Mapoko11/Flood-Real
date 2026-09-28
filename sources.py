@@ -870,7 +870,18 @@ def fetch_floodboard() -> dict:
     old = load_cache().get("floodboard") or {}
     if old.get("features") is not None and _minutes_since(old.get("at")) < FLOODBOARD_EVERY_MINUTES:
         return old
-    js = _get_json(CFG.get("FLOODBOARD_URL") or FLOODBOARD_URL)
+    try:
+        js = _get_json(CFG.get("FLOODBOARD_URL") or FLOODBOARD_URL)
+    except Exception as e:  # noqa: BLE001
+        # บางเครือข่าย (เช่น firewall องค์กรที่ตรวจ SSL) เข้า floodboard.org ไม่ได้
+        # -> ใช้ข้อมูลที่เว็บ github.io ของเราดึงไว้แล้ว (ช้ากว่าประมาณ 15–30 นาที) ไม่ปิดการตรวจ SSL
+        fb = (CFG.get("FLOODBOARD_FALLBACK_URL") or "").strip()
+        if not fb:
+            raise
+        prev = (_get_json(fb) or {}).get("floodboard") or {}
+        if prev.get("features") is None:
+            raise RuntimeError(f"ดึง Floodboard ไม่ได้ และไม่มีข้อมูลสำรอง ({type(e).__name__})") from None
+        return {**prev, "via": "github.io"}
     feats = []
     for f in (js or {}).get("features") or []:
         g, p = f.get("geometry") or {}, f.get("properties") or {}
