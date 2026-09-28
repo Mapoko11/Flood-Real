@@ -982,5 +982,18 @@ $("#btnRefresh").addEventListener("click", async ()=>{
   setTimeout(()=>b.disabled=false, 60000);
 });
 
+/* ยอดผู้เข้าชม (เฉพาะเว็บ github.io — ดึงผ่าน Worker, อัปเดตทุก 10 นาที) */
+async function loadVisits(){
+  if(!STATIC || !PROXY) return;
+  try{
+    const j = await fetch(`${PROXY}/stats`).then(r=>r.json());
+    if(!j.ok) return;
+    const el = $("#visits"); el.hidden = false;
+    el.textContent = `👀 วันนี้ ${fmt(j.today.visits,0)} คน (${fmt(j.today.views,0)} ครั้ง) · 7 วัน ${fmt(j.week.visits,0)} คน`;
+    el.title = "จำนวนผู้เข้าชมจาก Cloudflare Web Analytics · ข้อมูล " + String(j.at||"").replace("T"," ").slice(0,16);
+  }catch(e){}
+}
+loadVisits(); setInterval(loadVisits, 10*60*1000);
+
 load();
 setInterval(load, 60*1000);   // อ่านจาก cache ในเครื่อง เบา ถี่ได้ -> เห็นข้อมูลใหม่ภายใน 1 นาที

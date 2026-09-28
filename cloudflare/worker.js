@@ -84,6 +84,8 @@ export default {
         return json({ ok: st.status === "ok", ...st }, 200, cors);
       }
 
+      if (url.pathname === "/stats") return await visitStats(env, ctx, cors);
+
       const tm = url.pathname.match(/^\/tile\/(\d+)\/(\d+)\/(\d+)\.png$/);
       if (tm) return await tile(env, ctx, +tm[1], +tm[2], +tm[3], cors);
 
@@ -446,4 +448,45 @@ async function bkk(p, ctx, cors) {
   if (!r.ok) return json({ ok: false, error: `HTTP ${r.status}` }, 502, cors);
   ctx.waitUntil(caches.default.put(key, new Response(body, { headers: { "Content-Type": ct, "Cache-Control": "max-age=600" } })));
   return new Response(body, { headers: { ...cors, "Content-Type": ct } });
+}
+
+/* ---------------- ยอดผู้เข้าชม (Cloudflare Web Analytics ผ่าน GraphQL) ----------------
+ * ต้องมี Secret CF_API_TOKEN (สิทธิ์ Account Analytics: Read) + Variable CF_ACCOUNT_ID
+ * cache 10 นาที -> ไม่ยิง API ตามจำนวนคนเปิด */
+async function visitStats(env, ctx, cors) {
+  const key = new Request("https://floodreal-cache.local/stats");
+  const hit = await caches.default.match(key);
+  if (hit) return new Response(hit.body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8" } });
+  if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID) return json({ ok: false, error: "ยังไม่ได้ตั้ง CF_API_TOKEN / CF_ACCOUNT_ID" }, 200, cors);
+  const host = env.STATS_HOST || "mapoko11.github.io";
+  const th = new Date(Date.now() + 7 * 3600e3);                     // เวลาไทย
+  const today = th.toISOString().slice(0, 10);
+  const since = new Date(Date.parse(today + "T00:00:00Z") - 6 * 86400e3 - 7 * 3600e3).toISOString();   // 7 วัน (เริ่มเที่ยงคืนไทย)
+  const q = `query($acc: String!, $since: Time!, $host: String!) { viewer { accounts(filter: {accountTag: $acc}) {
+      rumPageloadEventsAdaptiveGroups(limit: 5000, filter: {datetime_geq: $since, requestHost: $host}) {
+        count sum { visits } dimensions { datetimeHour } } } } }`;
+  let out;
+  try {
+    const r = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${env.CF_API_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: q, variables: { acc: env.CF_ACCOUNT_ID, since, host } }),
+    });
+    const j = await r.json();
+    if (j.errors && j.errors.length) throw new Error(String(j.errors[0].message || "graphql error").slice(0, 120));
+    const rows = (((j.data || {}).viewer || {}).accounts || [{}])[0].rumPageloadEventsAdaptiveGroups || [];
+    const agg = { today: { views: 0, visits: 0 }, week: { views: 0, visits: 0 } };
+    for (const x of rows) {
+      const hTh = new Date(Date.parse(x.dimensions.datetimeHour) + 7 * 3600e3).toISOString().slice(0, 10);
+      const v = x.count || 0, vi = (x.sum || {}).visits || 0;
+      agg.week.views += v; agg.week.visits += vi;
+      if (hTh === today) { agg.today.views += v; agg.today.visits += vi; }
+    }
+    out = { ok: true, at: nowTh(), ...agg };
+  } catch (e) {
+    out = { ok: false, error: String(e && e.message || e).slice(0, 150) };
+  }
+  const body = JSON.stringify(out);
+  ctx.waitUntil(caches.default.put(key, new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${out.ok ? 600 : 120}` } })));
+  return new Response(body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8" } });
 }

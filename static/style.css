@@ -224,3 +224,4 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .rt-avoid{display:flex;align-items:center;gap:6px;font-weight:600}
 .bma-no{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 4px;border-radius:999px;color:#fff;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 1px 3px #000a;box-sizing:border-box}
 .bma-diff{margin:6px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.visits{white-space:nowrap}
