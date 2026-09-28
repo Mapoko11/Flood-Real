@@ -954,6 +954,17 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
 }));
 ["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy","#lyRoads","#lyBma","#lyCanal","#lyCctv"].forEach(s=>$(s).addEventListener("change", syncLayers));
 $("#lySat").addEventListener("change", ()=>{ if(map) loadSat(); });
+/* ติ๊กชั้นถนนน้ำท่วม -> วาดใหม่ด้วยข้อมูลล่าสุด แล้วซูมแผนที่ไปที่จุด/เส้นเหล่านั้นทันที */
+[["#lyRoads","roads"],["#lyBma","bma"],["#lyCanal","canal"]].forEach(([sel,key])=>$(sel).addEventListener("change", async ()=>{
+  if(!$(sel).checked || !map) return;
+  try{ await load(); }catch(e){}                      // ดึงข้อมูลล่าสุดก่อน
+  renderMap();
+  const g = layers[key];
+  let bounds = null;
+  g.eachLayer(l=>{ const b = l.getBounds ? l.getBounds() : (l.getLatLng ? L.latLngBounds([l.getLatLng()]) : null);
+    if(b && b.isValid()) bounds = bounds ? bounds.extend(b) : L.latLngBounds(b.getSouthWest(), b.getNorthEast()); });
+  if(bounds && bounds.isValid()) map.fitBounds(bounds.pad(0.05), {maxZoom: 13});
+}));
 $("#tfState").addEventListener("change", renderTraffy);
 $("#bmaShow").addEventListener("change", renderBma);
 $("#bmaCmp").addEventListener("change", renderBma);
