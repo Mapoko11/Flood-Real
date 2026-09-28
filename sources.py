@@ -820,11 +820,12 @@ def fetch_bma_segments() -> dict:
     pts = [p for p in ((load_cache().get("bma") or {}).get("points") or [])
            if p.get("code") and p.get("lat") and p.get("lon") and not p.get("tunnel")]
     missing = [p for p in pts if p["code"] not in segs and p["code"] not in (seg.get("none") or [])]
+    missing.sort(key=lambda p: p.get("state") not in ("flood", "minor"))   # จุดที่กำลังท่วมก่อน
     tried = seg.get("tried", "")
     if missing and _minutes_since(tried) > 24 * 60:
         seg["tried"] = _now()
         try:
-            got = _overpass_segments(missing[:150])
+            got = _overpass_segments(missing[:300])
         except Exception:  # noqa: BLE001 - Overpass ใช้ไม่ได้ (เช่น firewall) -> ลองเอาจากเว็บ github.io
             got = {}
             fb = (CFG.get("FLOODBOARD_FALLBACK_URL") or "").strip()
@@ -834,7 +835,7 @@ def fetch_bma_segments() -> dict:
                 except Exception:  # noqa: BLE001
                     got = {}
         else:
-            seg["none"] = sorted(set(seg.get("none") or []) | {p["code"] for p in missing[:150] if p["code"] not in got})
+            seg["none"] = sorted(set(seg.get("none") or []) | {p["code"] for p in missing[:300] if p["code"] not in got})
         segs.update(got)
         seg["segs"] = segs
         tmp = SEG_FILE + ".tmp"
