@@ -259,6 +259,7 @@ function bmaPopup(p){
 }
 
 function loadSat(force){
+  if(!$("#lySat").checked) return;   // ไม่ได้เลือกชั้นดาวเทียม -> ไม่โหลดไฟล์ใหญ่ (หน้าเว็บเปิดเร็วขึ้น)
   const cur = satCur();
   const key = satPeriod + "|" + (cur ? cur.at : "");
   if(!force && key === satShown) return;
@@ -739,6 +740,7 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
   renderKpis(); renderSat(); if(map) loadSat(true);
 }));
 ["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy","#lyBma","#lyCanal"].forEach(s=>$(s).addEventListener("change", syncLayers));
+$("#lySat").addEventListener("change", ()=>{ if(map) loadSat(); });
 $("#tfState").addEventListener("change", renderTraffy);
 $("#bmaShow").addEventListener("change", renderBma);
 $("#onlyRisk").addEventListener("change", renderMap);
