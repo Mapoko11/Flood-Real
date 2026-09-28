@@ -35,6 +35,7 @@
   <button data-tab="dam">เขื่อน</button>
   <button data-tab="sat">น้ำท่วม (ดาวเทียม)</button>
   <button data-tab="bma">🚗 น้ำท่วม กทม.</button>
+  <button data-tab="cam">📷 กล้อง CCTV</button>
   <button data-tab="traffy">แจ้งปัญหา (Traffy)</button>
   <button data-tab="traffic">🚗 รถติด</button>
   <button data-tab="fc">พยากรณ์ / เตือนภัย</button>
@@ -126,6 +127,19 @@
     <div class="filters"><span id="canalInfo" class="muted"></span></div>
     <div class="table-wrap"><table id="canalTable"></table></div>
     <div class="muted tr-foot">ระดับน้ำบนผิวถนนจากสถานีวัดของสำนักการระบายน้ำ กทม. · ≥10 ซม. รถเล็กควรเลี่ยง · ≥30 ซม. รถเก๋งเสี่ยงน้ำเข้า · สถานีขัดข้องไม่มีข้อมูล (ถนนนั้นอาจยังท่วมได้)</div>
+  </section>
+
+  <section class="panel" id="tab-cam">
+    <form class="tr-search" id="camForm" autocomplete="off" onsubmit="return false">
+      <input type="search" id="camQ" placeholder="ค้นกล้อง เช่น พระราม 4, สาทร, วิภาวดี, บางนา, ชลบุรี" maxlength="60">
+    </form>
+    <div class="filters">
+      <label><input type="checkbox" id="camBkk" checked> เฉพาะกรุงเทพฯ</label>
+      <label><input type="checkbox" id="camLive"> เฉพาะที่มีวิดีโอสด</label>
+      <span id="camInfo" class="muted"></span>
+    </div>
+    <div id="camGrid" class="cam-grid"></div>
+    <div class="muted tr-foot">ภาพจากกล้อง iTIC Foundation / กรมทางหลวง ผ่าน Longdo Traffic · บางกล้องปิดอยู่หรือโหลดช้า 10–20 วินาที</div>
   </section>
 
   <section class="panel" id="tab-traffy">

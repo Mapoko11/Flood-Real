@@ -79,7 +79,7 @@ function renderAll(){
   if(!DATA) return;
   try{ prepSat(); }catch(e){ console.error(e); }
   $("#updated").textContent = DATA.updated_at ? "อัปเดต " + DATA.updated_at.replace("T"," ") : "ยังไม่มีข้อมูล (รอรอบแรก)";
-  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderSat, renderTraffy, renderBma, renderCanal, renderFc]){
+  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderSat, renderTraffy, renderBma, renderCanal, renderCam, renderFc]){
     try{ f(); }catch(e){ console.error(f.name, e); }   // ส่วนไหนพัง ส่วนอื่นยังแสดง
   }
 }
@@ -282,6 +282,37 @@ async function camPlay(c, view){
     camHls = new Hls({maxBufferLength:10}); camHls.loadSource(c.hls); camHls.attachMedia(v);
     camHls.on(Hls.Events.ERROR, (_,d)=>{ if(d && d.fatal){ camStop(); fail(); } });
   }catch(e){ fail(); }
+}
+
+function renderCam(){
+  const all = (DATA.cctv||{}).cams || [];
+  const grid = $("#camGrid"); if(!grid) return;
+  if(!all.length){ $("#camInfo").textContent = "ยังไม่มีรายชื่อกล้อง"; grid.innerHTML=""; return; }
+  const q = $("#camQ").value.trim().toLowerCase().replace(/\s+/g,"");
+  const list = all.filter(c=> (!$("#camBkk").checked || c.bkk) && (!$("#camLive").checked || c.hls) &&
+      (!q || String(c.name+c.org).toLowerCase().replace(/\s+/g,"").includes(q)));
+  const show = list.slice(0, 24);
+  const key = show.map(c=>c.id).join(",") + "|" + ((DATA.cctv||{}).at||"");
+  if(key === renderCam.last) return;   // ข้อมูลรีเฟรชทุกนาที: ถ้ารายการเดิม ไม่วาดใหม่ (ภาพ/วิดีโอที่เปิดอยู่ไม่หาย)
+  renderCam.last = key; camStop();
+  $("#camInfo").textContent = `พบ ${list.length} กล้อง` + (list.length>show.length ? ` (แสดง ${show.length} ตัวแรก พิมพ์ค้นให้แคบลง)` : "");
+  grid.innerHTML = show.map((c,i)=>`<div class="cam-card" data-i="${i}">
+      <div class="cam-view">${c.img?`<img loading="lazy" referrerpolicy="no-referrer" alt="" src="${safeUrl(c.img)}">`:`<div class="cam-msg">มีแต่วิดีโอ</div>`}</div>
+      <div class="cam-t">${esc(c.name.replace(/^\([^)]*\)\s*/,""))}</div>
+      <div class="cam-btns">${c.hls?`<button class="btn btn-ghost cam-live">▶ วิดีโอสด</button>`:""}
+        <button class="btn btn-ghost cam-map">🗺️ แผนที่</button>
+        ${c.page?`<a class="btn btn-ghost" href="${safeUrl(c.page)}" target="_blank" rel="noopener">↗</a>`:""}</div></div>`).join("")
+    || `<div class="note">ไม่พบกล้องที่ตรงกับคำค้น</div>`;
+  grid.querySelectorAll(".cam-card").forEach(el=>{
+    const c = show[Number(el.dataset.i)], view = el.querySelector(".cam-view"), img = view.querySelector("img");
+    if(img) img.onerror = ()=>{ view.innerHTML = `<div class="cam-msg">ไม่มีภาพตอนนี้${c.hls?" — ลอง ▶ วิดีโอสด":""}</div>`; };
+    const lv = el.querySelector(".cam-live"); if(lv) lv.addEventListener("click", ()=>camPlay(c, view));
+    el.querySelector(".cam-map").addEventListener("click", ()=>{
+      camStop(); document.querySelector('#tabs button[data-tab=map]').click();
+      $("#lyCctv").checked = true; syncLayers();
+      setTimeout(()=>{ map.setView([c.lat,c.lon], 16); L.popup({maxWidth:360,minWidth:280}).setLatLng([c.lat,c.lon]).setContent(camPopup(c)).openOn(map); }, 150);
+    });
+  });
 }
 
 function canalPopup(p){
@@ -785,6 +816,8 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
 $("#lySat").addEventListener("change", ()=>{ if(map) loadSat(); });
 $("#tfState").addEventListener("change", renderTraffy);
 $("#bmaShow").addEventListener("change", renderBma);
+let camT=null; $("#camQ").addEventListener("input", ()=>{ clearTimeout(camT); camT=setTimeout(renderCam, 350); });
+$("#camBkk").addEventListener("change", renderCam); $("#camLive").addEventListener("change", renderCam);
 $("#onlyRisk").addEventListener("change", renderMap);
 if(STATIC){ $("#btnRefresh").style.display="none"; }
 $("#btnRefresh").addEventListener("click", async ()=>{
