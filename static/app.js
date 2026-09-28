@@ -727,10 +727,13 @@ function radarPlay(){
 $("#lyRadar").addEventListener("change", async e=>{
   if(!map) return;
   $("#radarBar").hidden = !e.target.checked;
+  // เรดาร์ RainViewer ละเอียดสุดประมาณระดับจังหวัด (ซูม 7) -> ถ้าซูมใกล้มากให้ถอยออกมาให้เห็นกลุ่มฝน
+  if(e.target.checked && map.getZoom() > 8){ saveView(); map.setZoom(8); }
   if(e.target.checked){ try{ await radarLoad(); }catch(err){ $("#rdTime").textContent="โหลดเรดาร์ไม่ได้"; } }
   else radarClear();
 });
 $("#rdPlay").addEventListener("click", radarPlay);
+$("#btnBack").addEventListener("click", restoreView);
 $("#rdFrame").addEventListener("input", e=>{ radarStop(); radarShow(Number(e.target.value)); });
 $("#rdOpacity").addEventListener("input", e=>{ radar.opacity = Number(e.target.value); radarShow(radar.idx); });
 /* เรดาร์เล็กในแท็บพยากรณ์ (แยกจากแผนที่ใหญ่) */
@@ -955,8 +958,17 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
 ["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy","#lyRoads","#lyBma","#lyCanal","#lyCctv"].forEach(s=>$(s).addEventListener("change", syncLayers));
 $("#lySat").addEventListener("change", ()=>{ if(map) loadSat(); });
 /* ติ๊กชั้นถนนน้ำท่วม -> วาดใหม่ด้วยข้อมูลล่าสุด แล้วซูมแผนที่ไปที่จุด/เส้นเหล่านั้นทันที */
+let savedView = null;   // มุมแผนที่ก่อนซูมอัตโนมัติ -> ใช้ย้อนกลับ
+function saveView(){ if(map && !savedView) savedView = {c: map.getCenter(), z: map.getZoom()}; updBack(); }
+function restoreView(){ if(map && savedView){ map.setView(savedView.c, savedView.z); } savedView = null; updBack(); }
+function updBack(){ const b=$("#btnBack"); if(b) b.hidden = !savedView; }
 [["#lyRoads","roads"],["#lyBma","bma"],["#lyCanal","canal"]].forEach(([sel,key])=>$(sel).addEventListener("change", async ()=>{
-  if(!$(sel).checked || !map) return;
+  if(!map) return;
+  if(!$(sel).checked){   // เอาติ๊กออกครบทุกชั้นน้ำท่วม -> กลับมุมแผนที่เดิม
+    if(!["#lyRoads","#lyBma","#lyCanal"].some(x=>$(x).checked)) restoreView();
+    return;
+  }
+  saveView();
   try{ await load(); }catch(e){}                      // ดึงข้อมูลล่าสุดก่อน
   renderMap();
   const g = layers[key];

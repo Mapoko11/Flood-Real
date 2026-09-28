@@ -68,6 +68,7 @@
       </div>
       <label>ขนาดจุด <input type="range" id="mSize" min="0.6" max="2" step="0.1" value="1"> <span id="mSizeV">1.0x</span></label>
       <button class="btn btn-ghost" id="btnLocate">📍 ตำแหน่งฉัน</button>
+      <button class="btn btn-ghost" id="btnBack" hidden>↩ กลับมุมเดิม</button>
       <button class="btn btn-ghost" id="btnHome">🇹🇭 ทั้งประเทศ</button>
       <button class="btn btn-ghost" id="btnFull">⛶ เต็มจอ</button>
     </div>
@@ -76,7 +77,7 @@
       <input type="range" id="rdFrame" min="0" max="0" value="0" style="flex:1;min-width:160px">
       <span id="rdTime" class="rd-time">-</span>
       <label>ความทึบ <input type="range" id="rdOpacity" min="0.2" max="1" step="0.1" value="0.7"></label>
-      <span class="muted">Weather data by <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a></span>
+      <span class="muted">ไม่เห็นสี = ช่วงเวลานั้นไม่มีฝนตรงบริเวณที่ดู (ลองซูมออก) · Weather data by <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a></span>
     </div>
     <div id="mapBox"><div id="map"></div></div>
     <div class="legend" id="legend"></div>
