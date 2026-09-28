@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -718,7 +719,129 @@ def fetch_bma() -> dict:
     pts.sort(key=lambda p: (order.get(p["state"], 9), -(p["cm"] or 0)))
     count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
     return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
+            "hist": _bma_hist(old.get("hist"), pts),
             "source": "https://weather.bangkok.go.th/Flood/"}
+
+
+BMA_HIST_HOURS = 49      # เก็บภาพย้อนหลังไว้เทียบ "น้ำลด/เพิ่ม" (ชั่วโมงละ 1 ภาพ)
+
+
+def _bma_hist(old, pts: list) -> list:
+    """ภาพระดับน้ำรายชั่วโมง [{t, p:{code: cm}}] เก็บเฉพาะจุดที่ท่วม (จุดที่ไม่อยู่ = ไม่ท่วม)"""
+    hist = [h for h in (old or []) if isinstance(h, dict) and h.get("t")]
+    now = datetime.now()
+    snap = {"t": now.strftime("%Y-%m-%dT%H:%M:%S"),
+            "p": {p["code"]: round(p["cm"] or 0, 1) for p in pts
+                  if p.get("code") and p.get("state") in ("flood", "minor")}}
+    if hist and _minutes_since(hist[-1]["t"]) < 55:
+        hist[-1] = snap                      # ชั่วโมงเดียวกัน -> ทับด้วยค่าล่าสุด
+    else:
+        hist.append(snap)
+    cutoff = (now - timedelta(hours=BMA_HIST_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
+    return [h for h in hist if h["t"] >= cutoff][-60:]
+
+
+# ---------------------------------------------------------------- ช่วงถนน ~120 ม. รอบจุดวัด กทม. (จาก OpenStreetMap)
+# ตำแหน่งจุดวัดไม่ค่อยเปลี่ยน -> หาเส้นถนนครั้งเดียวแล้วเก็บไว้ (เติมเฉพาะจุดใหม่ วันละครั้ง)
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+SEG_FILE = os.path.join(DATA_DIR, "bma_segments.json")
+SEG_HALF_M = 60
+
+
+def _xy(lat, lon, lat0):
+    return lon * 111320 * math.cos(math.radians(lat0)), lat * 110574
+
+
+def _clip_segment(geom: list, lat: float, lon: float, half: float = SEG_HALF_M):
+    """ตัดเส้นถนน (list [lat,lon]) ให้เหลือ ±half เมตร รอบจุดที่ใกล้ (lat,lon) ที่สุด คืน (ระยะห่างจุด, เส้น)"""
+    if len(geom) < 2:
+        return None
+    P = [_xy(a, b, lat) for a, b in geom]
+    px, py = _xy(lat, lon, lat)
+    best = (1e18, 0, 0.0)
+    cum = [0.0]
+    for i in range(len(P) - 1):
+        (x1, y1), (x2, y2) = P[i], P[i + 1]
+        dx, dy = x2 - x1, y2 - y1
+        L2 = dx * dx + dy * dy
+        t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / L2))
+        d = math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+        if d < best[0]:
+            best = (d, i, t)
+        cum.append(cum[-1] + math.sqrt(L2))
+    d, i, t = best
+    at = cum[i] + t * (cum[i + 1] - cum[i])
+    lo, hi = max(0.0, at - half), min(cum[-1], at + half)
+
+    def point_at(m):
+        for k in range(len(cum) - 1):
+            if cum[k] <= m <= cum[k + 1]:
+                seg = cum[k + 1] - cum[k]
+                f = 0.0 if seg == 0 else (m - cum[k]) / seg
+                return [round(geom[k][0] + f * (geom[k + 1][0] - geom[k][0]), 6),
+                        round(geom[k][1] + f * (geom[k + 1][1] - geom[k][1]), 6)]
+        return [round(geom[-1][0], 6), round(geom[-1][1], 6)]
+    line = [point_at(lo)] + [[round(a, 6), round(b, 6)] for (a, b), c in zip(geom, cum) if lo < c < hi] + [point_at(hi)]
+    return d, line
+
+
+def _overpass_segments(points: list) -> dict:
+    """ถาม Overpass ครั้งเดียวสำหรับหลายจุด -> {code: [[lat,lon],...]}"""
+    parts = "".join(f"way(around:40,{p['lat']:.6f},{p['lon']:.6f})[highway][highway!~\"footway|path|steps|cycleway|service|track\"];"
+                    for p in points)
+    q = f"[out:json][timeout:90];({parts});out geom;"
+    req = urllib.request.Request(OVERPASS_URL, data=urllib.parse.urlencode({"data": q}).encode(),
+                                 headers={"User-Agent": UA + " (flood map; contact via github Mapoko11)"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        js = json.loads(r.read().decode("utf-8"))
+    ways = [[[g["lat"], g["lon"]] for g in (w.get("geometry") or [])] for w in js.get("elements") or []
+            if w.get("type") == "way"]
+    out = {}
+    for p in points:
+        cands = [c for c in (_clip_segment(g, p["lat"], p["lon"]) for g in ways) if c]
+        if cands:
+            d, line = min(cands, key=lambda c: c[0])
+            if d <= 45:
+                out[p["code"]] = line
+    return out
+
+
+def fetch_bma_segments() -> dict:
+    """เส้นถนนรอบจุดวัด กทม. (ใช้วาดช่วงถนนน้ำท่วม) — ใช้ไฟล์เดิม เติมเฉพาะจุดที่ยังไม่มี วันละครั้ง"""
+    try:
+        with open(SEG_FILE, "r", encoding="utf-8") as f:
+            seg = json.load(f)
+    except (OSError, ValueError):
+        seg = {}
+    segs = seg.get("segs") or {}
+    old = load_cache().get("bma_seg") or {}
+    if not segs and old.get("segs"):
+        segs = dict(old["segs"])
+    pts = [p for p in ((load_cache().get("bma") or {}).get("points") or [])
+           if p.get("code") and p.get("lat") and p.get("lon") and not p.get("tunnel")]
+    missing = [p for p in pts if p["code"] not in segs and p["code"] not in (seg.get("none") or [])]
+    tried = seg.get("tried", "")
+    if missing and _minutes_since(tried) > 24 * 60:
+        seg["tried"] = _now()
+        try:
+            got = _overpass_segments(missing[:150])
+        except Exception:  # noqa: BLE001 - Overpass ใช้ไม่ได้ (เช่น firewall) -> ลองเอาจากเว็บ github.io
+            got = {}
+            fb = (CFG.get("FLOODBOARD_FALLBACK_URL") or "").strip()
+            if fb:
+                try:
+                    got = ((_get_json(fb) or {}).get("bma_seg") or {}).get("segs") or {}
+                except Exception:  # noqa: BLE001
+                    got = {}
+        else:
+            seg["none"] = sorted(set(seg.get("none") or []) | {p["code"] for p in missing[:150] if p["code"] not in got})
+        segs.update(got)
+        seg["segs"] = segs
+        tmp = SEG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(seg, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, SEG_FILE)
+    return {"configured": True, "at": _now(), "count": len(segs), "segs": segs}
 
 
 
@@ -914,6 +1037,7 @@ SOURCES = {
     "bma_canal": fetch_bma_canal,
     "cctv": fetch_cctv,
     "floodboard": fetch_floodboard,
+    "bma_seg": fetch_bma_segments,
 }
 
 

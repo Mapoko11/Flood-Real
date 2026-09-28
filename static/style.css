@@ -222,3 +222,5 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .nb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:6px 0}
 .nb-grid>div{background:var(--card,#111827);border:1px solid #8883;border-radius:10px;padding:8px;line-height:1.7}
 .rt-avoid{display:flex;align-items:center;gap:6px;font-weight:600}
+.bma-no{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 4px;border-radius:999px;color:#fff;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 1px 3px #000a;box-sizing:border-box}
+.bma-diff{margin:6px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:center}

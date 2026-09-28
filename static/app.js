@@ -29,10 +29,37 @@ async function getRadar(){
 const WL = {1:["น้อยวิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["น้ำมาก","#3b82f6"],5:["ล้นตลิ่ง","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
 const RAIN = {0:["ไม่มีฝน","#64748b"],1:["เล็กน้อย","#a5f3fc"],2:["ปานกลาง","#38bdf8"],3:["หนัก","#22c55e"],4:["หนักมาก","#f97316"]};
 const DAM = {1:["วิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["มาก","#3b82f6"],5:["เกินความจุ","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
-const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",cctv:"กล้อง CCTV",floodboard:"Floodboard"};
+const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",bma_seg:"เส้นถนน OSM",cctv:"กล้อง CCTV",floodboard:"Floodboard"};
 const CANAL = {critical:["ถึงระดับวิกฤต","#ef4444"],warning:["เฝ้าระวัง","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"]};
 const BMA = {flood:["น้ำท่วม","#ef4444"],minor:["ท่วมขังเล็กน้อย","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"],unknown:["ไม่ทราบ","#64748b"]};
 function bmaWet(p){ return p.state==="flood" || p.state==="minor"; }
+function bmaColor(p){ const c=p.cm||0; return p.state==="minor" ? "#eab308" : c>=50 ? "#7f1d1d" : c>=30 ? "#dc2626" : c>=10 ? "#f97316" : "#eab308"; }
+/* ลำดับเลขจุดน้ำท่วม (ท่วมก่อน แล้วลึกมาก→น้อย) ใช้ตรงกันทั้งแผนที่และตาราง */
+function bmaNumbers(){
+  const wet = ((DATA.bma||{}).points||[]).filter(bmaWet).sort((a,b)=>(a.state===b.state?0:a.state==="flood"?-1:1) || (b.cm||0)-(a.cm||0));
+  const m = {}; wet.forEach((p,i)=>m[p.code]=i+1); return m;
+}
+/* เทียบกับภาพย้อนหลัง h ชั่วโมง -> {at, d:{code:{kind, then, now}}, n:{new,up,down,gone,same}} */
+function bmaDiff(h){
+  const b = DATA.bma||{}, hist = b.hist||[]; if(!h || !hist.length || !b.points) return null;
+  const target = Date.now() - h*3600e3;
+  let best=null, bd=1e18;
+  hist.forEach(x=>{ const d=Math.abs(new Date(x.t).getTime()-target); if(d<bd){bd=d;best=x;} });
+  if(!best || bd > Math.max(90*60e3, h*3600e3*0.25)) return {at:null};
+  const d={}, n={new:0,up:0,down:0,gone:0,same:0};
+  b.points.forEach(p=>{
+    if(p.state==="down"||p.state==="unknown") return;
+    const now = bmaWet(p) ? (p.cm||0) : 0, then = best.p[p.code] || 0;
+    if(!now && !then) return;
+    const kind = !then ? "new" : !now ? "gone" : now-then>=2 ? "up" : then-now>=2 ? "down" : "same";
+    d[p.code] = {kind, then, now}; n[kind]++;
+  });
+  return {at:best.t, d, n};
+}
+const DIFF_TXT = {new:["ท่วมใหม่","#dc2626"], up:["น้ำสูงขึ้น","#f97316"], same:["เท่าเดิม","#64748b"], down:["น้ำลด","#0ea5e9"], gone:["ไม่ท่วมแล้ว","#22c55e"]};
+function diffBadge(x){ if(!x) return ""; const [t,c]=DIFF_TXT[x.kind];
+  const dv = x.kind==="up"||x.kind==="down" ? ` ${x.now-x.then>0?"▲+":"▼"}${fmt(x.now-x.then,0)}` : x.kind==="new"?" ▲":x.kind==="gone"?" ▼":"";
+  return `<span class="pill" style="background:${c}">${t}${dv}</span>`; }
 const TF_COLOR = {"รอรับเรื่อง":"#ef4444","กำลังดำเนินการ":"#f59e0b","ส่งต่อ":"#a855f7","เสร็จสิ้น":"#22c55e"};
 function tfColor(st){ return TF_COLOR[st] || "#94a3b8"; }
 function tfOpen(it){ return !/เสร็จสิ้น|ยกเลิก|ไม่เกี่ยวข้อง/.test(it.state||""); }
@@ -238,6 +265,7 @@ function renderMap(){
         .bindPopup(canalPopup(p)).addTo(layers.canal);
     });
 
+  const bmaNo = bmaNumbers();
   ((DATA.bma||{}).points||[]).filter(hasLL).filter(p=>p.state!=="down" && p.state!=="unknown")
     .filter(p=>match(p,["name","road","district"]))
     .filter(p=>!risk || bmaWet(p))
@@ -246,8 +274,13 @@ function renderMap(){
       const c = (BMA[p.state]||BMA.unknown)[1];
       let mk;
       if(bmaWet(p)){
-        const icon = L.divIcon({className:"", html:`<div class="bma-pin" style="background:${c};font-size:${Math.round(12*sizeK)}px">${fmt(p.cm,0)} ซม.</div>`, iconSize:null, iconAnchor:[18,10]});
-        mk = L.marker([p.lat,p.lon],{icon, zIndexOffset:500});
+        const col = bmaColor(p), no = bmaNo[p.code] || "";
+        const seg = ((DATA.bma_seg||{}).segs||{})[p.code];
+        if(seg && seg.length > 1) L.polyline(seg, {color:col, weight:9*sizeK, opacity:.9, lineCap:"round"}).bindPopup(bmaPopup(p)).addTo(layers.bma);
+        const sz = Math.round(22*sizeK);
+        const icon = L.divIcon({className:"", html:`<div class="bma-no" style="background:${col};width:${sz}px;height:${sz}px;font-size:${Math.round(11*sizeK)}px">${no}</div>`,
+          iconSize:[sz,sz], iconAnchor:[sz/2,sz/2]});
+        mk = L.marker([p.lat,p.lon],{icon, zIndexOffset:500, title:`${no}. ${p.name} ${fmt(p.cm,0)} ซม.`});
       } else {
         mk = L.circleMarker([p.lat,p.lon],{radius:4*sizeK, color:"#fff", weight:1, fillColor:c, fillOpacity:.9});
       }
@@ -397,7 +430,8 @@ function canalPopup(p){
 }
 
 function bmaPopup(p){
-  return `<b>🚗 ${esc(p.name)}</b><br>${esc(p.road)} · เขต${esc(p.district)}<br>
+  const df = bmaDiff(Number(($("#bmaCmp")||{}).value||0)), x = df && df.d ? df.d[p.code] : null;
+  return `<b>🚗 ${esc(p.name)}</b><br>${esc(p.road)} · เขต${esc(p.district)}<br>${x?`เทียบ ${esc(String(df.at).slice(5,16).replace("T"," "))}: ${diffBadge(x)} (เดิม ${fmt(x.then,0)} ซม.)<br>`:""}
     ระดับน้ำบนถนน <b>${fmt(p.cm,1)} ซม.</b> ${pill(BMA,p.state)}${p.max_cm!=null&&bmaWet(p)?`<br>สูงสุดรอบนี้ ${fmt(p.max_cm,1)} ซม.`:""}
     ${p.since?`<br>เริ่มท่วม ${esc(p.since.replace("T"," "))}`:""}<br>
     <small>วัดเมื่อ ${esc((p.time||"-").replace("T"," "))} · สำนักการระบายน้ำ กทม.</small>`;
@@ -538,16 +572,20 @@ function renderBma(){
   const st = (DATA.status||{}).bma;
   if(b.configured===false){ $("#bmaInfo").textContent="ปิดการดึงข้อมูล กทม. อยู่ (BMA_FLOOD_ENABLED)"; return; }
   if(!b.points){ $("#bmaInfo").textContent = st && !st.ok ? "ยังดึงข้อมูล กทม. ไม่ได้: "+st.error : "ยังไม่มีข้อมูล (รอรอบแรก)"; $("#bmaTable").innerHTML=""; return; }
-  const sel = $("#bmaShow").value;
+  const sel = $("#bmaShow").value, no = bmaNumbers();
+  const df = bmaDiff(Number($("#bmaCmp").value||0));
   const pts = b.points.filter(p=>match(p,["name","road","district"]))
-    .filter(p=> sel==="wet" ? bmaWet(p) : sel==="ok" ? (p.state!=="down" && p.state!=="unknown") : true);
+    .filter(p=> sel==="wet" ? (bmaWet(p) || (df && df.d && df.d[p.code])) : sel==="ok" ? (p.state!=="down" && p.state!=="unknown") : true)
+    .sort((a,b)=>(no[a.code]||999)-(no[b.code]||999));
+  $("#bmaDiff").innerHTML = !df ? "" : !df.at ? `<span class="muted">ยังไม่มีข้อมูลย้อนหลังพอสำหรับช่วงนี้ (ระบบเริ่มเก็บชั่วโมงละครั้งตั้งแต่อัปเดตนี้)</span>` :
+    `เทียบกับ <b>${esc(String(df.at).slice(5,16).replace("T"," "))}</b>: ` + ["gone","down","same","up","new"].map(k=>`<span class="pill" style="background:${DIFF_TXT[k][1]}">${df.n[k]} จุด${DIFF_TXT[k][0]}</span>`).join(" ");
   const c = b.count||{};
   $("#bmaInfo").innerHTML = `น้ำท่วม <b style="color:${BMA.flood[1]}">${c.flood||0}</b> · ท่วมขังเล็กน้อย <b style="color:${BMA.minor[1]}">${c.minor||0}</b> · ปกติ ${c.normal||0} · ขัดข้อง ${c.down||0} จุด` +
     ` <span class="muted">· ดึงเมื่อ ${esc((b.at||"").replace("T"," "))}${st&&!st.ok?" (รอบล่าสุดดึงไม่ได้ ใช้ข้อมูลเดิม)":""} · <a href="${safeUrl(b.source)}" target="_blank" rel="noopener">สำนักการระบายน้ำ กทม.</a></span>`;
-  $("#bmaTable").innerHTML = `<thead><tr><th>จุดวัด</th><th>ถนน</th><th>เขต</th><th class="num">ระดับน้ำ (ซม.)</th><th>สถานะ</th><th>เริ่มท่วม</th><th>เวลาวัด</th></tr></thead><tbody>` +
-    (pts.length ? pts.map((p,i)=>`<tr class="bma-row" data-i="${i}"><td><b>${esc(p.name)}</b></td><td>${esc(p.road)}</td><td>${esc(p.district)}</td>
-      <td class="num"><b>${fmt(p.cm,1)}</b></td><td>${pill(BMA,p.state)}</td><td>${esc((p.since||"").slice(5,16).replace("T"," "))}</td><td>${esc((p.time||"").slice(11,16))}</td></tr>`).join("")
-      : `<tr><td colspan="7" class="muted">ไม่มีจุดน้ำท่วมถนนตอนนี้ 🎉</td></tr>`) + "</tbody>";
+  $("#bmaTable").innerHTML = `<thead><tr><th>#</th><th>จุดวัด</th><th>ถนน</th><th>เขต</th><th class="num">ระดับน้ำ (ซม.)</th><th>สถานะ</th>${df&&df.at?"<th>เทียบ</th>":""}<th>เริ่มท่วม</th><th>เวลาวัด</th></tr></thead><tbody>` +
+    (pts.length ? pts.map((p,i)=>`<tr class="bma-row" data-i="${i}"><td>${no[p.code]?`<span class="bma-no" style="background:${bmaColor(p)}">${no[p.code]}</span>`:""}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.road)}</td><td>${esc(p.district)}</td>
+      <td class="num"><b>${fmt(p.cm,1)}</b></td><td>${pill(BMA,p.state)}</td>${df&&df.at?`<td>${diffBadge(df.d[p.code])}</td>`:""}<td>${esc((p.since||"").slice(5,16).replace("T"," "))}</td><td>${esc((p.time||"").slice(11,16))}</td></tr>`).join("")
+      : `<tr><td colspan="9" class="muted">ไม่มีจุดน้ำท่วมถนนตอนนี้ 🎉</td></tr>`) + "</tbody>";
   $("#bmaTable").querySelectorAll(".bma-row").forEach(el=>el.addEventListener("click",()=>{
     const p = pts[Number(el.dataset.i)];
     if(!p || !hasLL(p) || !map) return;
@@ -918,6 +956,7 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
 $("#lySat").addEventListener("change", ()=>{ if(map) loadSat(); });
 $("#tfState").addEventListener("change", renderTraffy);
 $("#bmaShow").addEventListener("change", renderBma);
+$("#bmaCmp").addEventListener("change", renderBma);
 let camT=null; $("#camQ").addEventListener("input", ()=>{ clearTimeout(camT); camT=setTimeout(renderCam, 350); });
 $("#camProv").addEventListener("change", renderCam); $("#camLive").addEventListener("change", renderCam);
 $("#onlyRisk").addEventListener("change", renderMap);
