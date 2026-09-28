@@ -215,3 +215,4 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .cam-card .cam-view{height:170px}
 .cam-card .cam-view img{height:170px;max-height:none}
 .cam-t{font-size:13.5px;font-weight:600;margin:4px 0 6px;min-height:2.6em}
+.cam-bma{margin:8px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
