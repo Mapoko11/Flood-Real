@@ -814,7 +814,7 @@ function trDraw(res){
   layers.tr.clearLayers();
   (res.items||[]).forEach((it,i)=>{
     const c = TR_COLOR[it.magnitude] || TR_COLOR[0];
-    const line = L.polyline(it.line, {color:c, weight: it.on_road ? 8 : 5, opacity:.9}).addTo(layers.tr);
+    const line = L.polyline(it.line, {color:c, weight: it.on_road ? 8 : 4, opacity: it.on_road ? .95 : .35, dashArray: it.on_road ? null : "6 6"}).addTo(layers.tr);
     line.bindPopup(trCard(it,i).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280});
   });
 }
@@ -837,12 +837,19 @@ async function trSearch(q){
     const r = await fetch(TR_API.traffic(q)); const j = await r.json();
     if(!j.ok){ $("#trInfo").textContent = "⚠ " + (j.error || "ค้นหาไม่สำเร็จ"); return; }
     trLast = j;
-    const onRoad = j.items.filter(i=>i.on_road && i.cat===6);
-    const km = onRoad.reduce((a,i)=>a+i.length_km,0);
-    $("#trInfo").innerHTML = `<b>${esc(j.road.name)}</b> ${esc(j.road.area)} · พบ ${j.total} เหตุการณ์ในบริเวณ` +
-      (onRoad.length ? ` · <b style="color:#ef4444">รถติดบนถนนนี้ ${onRoad.length} ช่วง รวม ${fmt(km,1)} กม.</b>` : " · ไม่พบรถติดบนถนนนี้ขณะนี้ 👍") +
+    // แยก "บนถนนที่ค้น" กับ "ถนนใกล้เคียง" ให้ชัด (ของใกล้เคียงพับเก็บไว้)
+    const mine = j.items.filter(i=>i.on_road), near = j.items.filter(i=>!i.on_road);
+    const jams = mine.filter(i=>i.cat===6), others = mine.filter(i=>i.cat!==6);
+    const km = jams.reduce((a,i)=>a+(i.length_km||0),0);
+    const parts = [];
+    if(jams.length) parts.push(`<b style="color:#ef4444">รถติด ${jams.length} ช่วง รวม ${fmt(km,1)} กม.</b>`);
+    if(others.length) parts.push(`<b style="color:#f97316">${others.map(i=>i.category).filter((v,k,a)=>a.indexOf(v)===k).map(esc).join(" / ")} ${others.length} จุด</b>`);
+    $("#trInfo").innerHTML = `<b>${esc(j.road.name)}</b> ${esc(j.road.area)} · บนถนนนี้: ` +
+      (parts.length ? parts.join(" · ") : "ไม่มีรถติดหรือเหตุขัดข้องขณะนี้ 👍") +
       ` <span class="muted">(ข้อมูล ${esc(j.at.slice(11,16))} น.${j.cached ? " · ผลล่าสุดใน 5 นาที" : ""})</span>`;
-    $("#trList").innerHTML = j.items.map(trCard).join("") || `<div class="note">ไม่มีเหตุรถติดในบริเวณนี้</div>`;
+    const idx = it=>j.items.indexOf(it);
+    $("#trList").innerHTML = (mine.length ? mine.map(it=>trCard(it, idx(it))).join("") : `<div class="note">ไม่มีเหตุบนถนน${esc(j.road.name)}ขณะนี้</div>`)
+      + (near.length ? `<details class="tr-near"><summary>ถนนใกล้เคียง ${near.length} เหตุการณ์ (กดเพื่อดู)</summary>${near.map(it=>trCard(it, idx(it))).join("")}</details>` : "");
     $("#trList").querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>trFocus(j.items[Number(el.dataset.i)])));
     if(map) trDraw(j);
     trUsage();
