@@ -19,7 +19,7 @@ import sources
 import traffic
 from config import CFG
 
-VERSION = "1.12.0"
+VERSION = "1.13.0"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
@@ -190,7 +190,8 @@ def api_route():
         return jsonify({"ok": False, "error": "ค้นถี่เกินไป (สูงสุด 20 ครั้ง/10 นาที) รอสักครู่"}), 429
     _tf_hits[ip] = hits + [now]
     try:
-        return jsonify(traffic.route(request.args.get("from", ""), request.args.get("to", "")))
+        return jsonify(traffic.route(request.args.get("from", ""), request.args.get("to", ""),
+                                     request.args.get("avoid", "")[:4000]))
     except traffic.TrafficError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:  # noqa: BLE001

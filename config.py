@@ -46,6 +46,10 @@ DEFAULTS = {
     "CCTV_ENABLED": True,
     "CCTV_URL": "https://camera.longdo.com/feed/?command=json",
 
+    # ---- Floodboard (floodboard.org) เส้นถนนมีน้ำ — open data ไม่ต้องใช้ key ----
+    "FLOODBOARD_ENABLED": True,
+    "FLOODBOARD_URL": "https://floodboard.org/api/export/roads.geojson",
+
     # ---- TomTom Traffic (รถติด) — สมัคร key ฟรีที่ developer.tomtom.com ----
     "TOMTOM_API_KEY": "",
     "TRAFFIC_CACHE_MINUTES": 5,    # ถนนเดิมค้นซ้ำภายในกี่นาทีใช้ผลเดิม (ประหยัดโควตา 2,500/เดือน)

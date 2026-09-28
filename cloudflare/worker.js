@@ -91,7 +91,8 @@ export default {
         const ip = request.headers.get("CF-Connecting-IP") || "?";
         if (!ipAllow(ip)) return json({ ok: false, error: "ค้นถี่เกินไป รอสักครู่แล้วลองใหม่" }, 429, cors);
         const isRoute = url.pathname === "/route";
-        const q = isRoute ? `${norm(url.searchParams.get("from"))}|${norm(url.searchParams.get("to"))}`
+        const avoidRaw = (url.searchParams.get("avoid") || "").slice(0, 4000);
+        const q = isRoute ? `${norm(url.searchParams.get("from"))}|${norm(url.searchParams.get("to"))}|${avoidRaw}`
                           : norm(url.searchParams.get("q"));
         const cacheKey = new Request(`https://cache.floodreal/${isRoute ? "r" : "t"}/${encodeURIComponent(q)}`);
         const cache = caches.default;
@@ -101,7 +102,7 @@ export default {
           return json({ ...body, cached: true }, 200, cors);
         }
         const result = isRoute
-          ? await route(env, url.searchParams.get("from"), url.searchParams.get("to"))
+          ? await route(env, url.searchParams.get("from"), url.searchParams.get("to"), avoidRaw)
           : await search(env, url.searchParams.get("q"));
         ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(result), {
           headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${CACHE_SEC}` } })));
@@ -148,10 +149,12 @@ async function spend(env, kind) {
   if (n >= DAILY[kind]) throw new TrafficError("โควตาของวันนี้หมดแล้ว (กันไม่ให้เกินฟรี) ลองใหม่พรุ่งนี้ หรือใช้เว็บในเครื่อง/วงแลน");
   await env.COUNTER.put(k, String(n + 1), { expirationTtl: 3 * 86400 });
 }
-async function tt(env, url) {
+async function tt(env, url, body) {
   if (!env.TOMTOM_API_KEY) throw new TrafficError("ยังไม่ได้ตั้ง TOMTOM_API_KEY ใน Worker");
   const u = url + (url.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(env.TOMTOM_API_KEY);
-  const r = await fetch(u, { headers: { "User-Agent": "FloodReal-Worker/1.0" } });
+  const init = { headers: { "User-Agent": "FloodReal-Worker/1.0" } };
+  if (body) { init.method = "POST"; init.body = JSON.stringify(body); init.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(u, init);
   if (r.status === 401 || r.status === 403) throw new TrafficError("TomTom ปฏิเสธ key");
   if (r.status === 429) throw new TrafficError("TomTom จำกัดความถี่ ลองใหม่อีกสักครู่");
   if (!r.ok) throw new TrafficError(`TomTom ตอบ HTTP ${r.status}`);
@@ -260,15 +263,45 @@ function viaStreets(instr, total) {
   });
   return Object.entries(d).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]);
 }
-async function route(env, srcRaw, dstRaw) {
+/* จุดน้ำท่วมที่หน้าเว็บส่งมา "s,w,n,e;..." -> เลือก ≤10 กล่องที่อยู่ใกล้แนวต้นทาง-ปลายทาง (TomTom avoidAreas) */
+function parseAvoid(s) {
+  const out = [];
+  for (const part of String(s || "").split(";").slice(0, 80)) {
+    const b = part.split(",").map(Number);
+    if (b.length !== 4 || b.some(x => !isFinite(x))) continue;
+    const [so, we, no, ea] = b;
+    if (so >= 5 && so < no && no <= 21 && we >= 97 && we < ea && ea <= 106 && no - so <= 0.05 && ea - we <= 0.05) out.push(b);
+  }
+  return out;
+}
+function segKm(plat, plon, a, b) {
+  const kx = 111.32 * Math.cos(plat * Math.PI / 180), ky = 110.57;
+  const ax = a.lon * kx, ay = a.lat * ky, bx = b.lon * kx, by = b.lat * ky, px = plon * kx, py = plat * ky;
+  const dx = bx - ax, dy = by - ay;
+  const t = (dx === 0 && dy === 0) ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+function pickAvoid(boxes, a, b) {
+  const corridor = Math.max(3, 0.25 * km(a.lat, a.lon, b.lat, b.lon));
+  return boxes.filter(x => ![a, b].some(p => x[0] <= p.lat && p.lat <= x[2] && x[1] <= p.lon && p.lon <= x[3]))
+    .map(x => [segKm((x[0] + x[2]) / 2, (x[1] + x[3]) / 2, a, b), x]).filter(v => v[0] <= corridor)
+    .sort((p, q) => p[0] - q[0]).slice(0, 10).map(v => v[1]);
+}
+
+async function route(env, srcRaw, dstRaw, avoidRaw) {
   const src = String(srcRaw || "").trim(), dst = String(dstRaw || "").trim();
   if (src.length < 2 || src.length > 100 || dst.length < 2 || dst.length > 100) throw new TrafficError("ใส่ต้นทางและปลายทาง (2–100 ตัวอักษร)");
   await spend(env, "route");
   const a = await place(env, src);
   const b = await place(env, dst, [a.lat, a.lon]);
   const locs = `${a.lat.toFixed(6)},${a.lon.toFixed(6)}:${b.lat.toFixed(6)},${b.lon.toFixed(6)}`;
-  const js = await (await tt(env, `https://api.tomtom.com/routing/1/calculateRoute/${locs}/json?traffic=true&maxAlternatives=2` +
-    `&routeType=fastest&travelMode=car&departAt=now&instructionsType=text&language=th-TH&computeTravelTimeFor=all&sectionType=traffic`)).json();
+  const rurl = `https://api.tomtom.com/routing/1/calculateRoute/${locs}/json?traffic=true&maxAlternatives=2` +
+    `&routeType=fastest&travelMode=car&departAt=now&instructionsType=text&language=th-TH&computeTravelTimeFor=all&sectionType=traffic`;
+  let chosen = pickAvoid(parseAvoid(avoidRaw), a, b), js;
+  const body = chosen.length ? { avoidAreas: { rectangles: chosen.map(x => ({
+    southWestCorner: { latitude: x[0], longitude: x[1] }, northEastCorner: { latitude: x[2], longitude: x[3] } })) } } : null;
+  try { js = await (await tt(env, rurl, body)).json(); }
+  catch (e) { if (!body) throw e; chosen = []; js = await (await tt(env, rurl)).json(); }   // หลบไม่ได้ -> เส้นทางปกติ
   const routes = [];
   for (const r of js.routes || []) {
     const sm = r.summary || {};
@@ -305,7 +338,7 @@ async function route(env, srcRaw, dstRaw) {
   routes.forEach((r, i) => { r.best = i === best; r.saves_min = Math.max(0, slowest - r.minutes); });
   const far = km(a.lat, a.lon, b.lat, b.lon);
   const warn = far > 150 ? `ต้นทาง/ปลายทางห่างกัน ${Math.round(far).toLocaleString()} กม. — ถ้าไม่ใช่ที่ตั้งใจ ลองพิมพ์ชื่อให้ชัดขึ้น เช่น ใส่เขต/จังหวัด` : "";
-  return { ok: true, from: a, to: b, routes, best, warn, at: nowTh(), cached: false };
+  return { ok: true, from: a, to: b, routes, best, warn, avoided: chosen, at: nowTh(), cached: false };
 }
 
 /* ---------------- ภาพสีการจราจร ---------------- */

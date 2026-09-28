@@ -850,6 +850,48 @@ def fetch_cctv() -> dict:
             "source": "https://traffic.longdo.com/cameralist"}
 
 
+
+# ---------------------------------------------------------------- Floodboard (floodboard.org) — เส้นถนนที่มีน้ำ (open data, CORS)
+FLOODBOARD_URL = "https://floodboard.org/api/export/roads.geojson"
+FLOODBOARD_EVERY_MINUTES = 10
+
+
+def _r5(c):
+    if isinstance(c, (list, tuple)):
+        if c and isinstance(c[0], (int, float)):
+            return [round(float(c[0]), 5), round(float(c[1]), 5)]
+        return [_r5(x) for x in c]
+    return c
+
+
+def fetch_floodboard() -> dict:
+    if not CFG.get("FLOODBOARD_ENABLED", True):
+        return {"configured": False, "features": []}
+    old = load_cache().get("floodboard") or {}
+    if old.get("features") is not None and _minutes_since(old.get("at")) < FLOODBOARD_EVERY_MINUTES:
+        return old
+    js = _get_json(CFG.get("FLOODBOARD_URL") or FLOODBOARD_URL)
+    feats = []
+    for f in (js or {}).get("features") or []:
+        g, p = f.get("geometry") or {}, f.get("properties") or {}
+        if g.get("type") not in ("LineString", "MultiLineString"):
+            continue
+        upd = _num(p.get("updated"))
+        verdict = p.get("verdict") if isinstance(p.get("verdict"), dict) else {}
+        feats.append({"type": "Feature", "geometry": {"type": g["type"], "coordinates": _r5(g.get("coordinates"))},
+                      "properties": {
+                          "name": str(p.get("name") or p.get("nameEn") or "").strip()[:100],
+                          "depth": _num(p.get("depthCm")),
+                          "closedAll": bool(p.get("closedAll")), "closedSmall": bool(p.get("closedSmall")),
+                          "cleared": bool(p.get("cleared")), "conf": _num(p.get("conf")),
+                          "estimated": bool(p.get("estimated")),
+                          "updated": datetime.fromtimestamp(upd / 1000).strftime("%Y-%m-%dT%H:%M:%S") if upd else "",
+                          "verdict": {str(k)[:12]: str(v)[:12] for k, v in list(verdict.items())[:5]},
+                          "sources": [str(x)[:20] for x in (p.get("sources") or [])][:6]}})
+    return {"configured": True, "at": _now(), "features": feats, "count": len(feats),
+            "source": "https://floodboard.org/"}
+
+
 SOURCES = {
     "waterlevel": fetch_waterlevel,
     "rain": fetch_rain,
@@ -860,6 +902,7 @@ SOURCES = {
     "bma": fetch_bma,
     "bma_canal": fetch_bma_canal,
     "cctv": fetch_cctv,
+    "floodboard": fetch_floodboard,
 }
 
 

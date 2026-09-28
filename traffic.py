@@ -87,9 +87,13 @@ def usage() -> dict:
     return {"month": u.get("month", ""), **{k: {"used": u.get(k, 0), "limit": v} for k, v in MONTHLY_LIMIT.items()}}
 
 
-def _get(url: str, kind: str, raw: bool = False):
+def _get(url: str, kind: str, raw: bool = False, body: dict | None = None):
     _use(kind)
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    if body is None:
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    else:   # POST (เช่น calculateRoute + avoidAreas)
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                     headers={"User-Agent": UA, "Accept": "*/*", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=CFG["HTTP_TIMEOUT"]) as r:
             data = r.read()
@@ -308,11 +312,51 @@ def _via_streets(instr: list, total_m: float) -> list:
     return [k for k, _ in sorted(dist.items(), key=lambda kv: -kv[1])[:3]]
 
 
-def route(src: str, dst: str) -> dict:
+def parse_avoid(s: str) -> list:
+    """'s,w,n,e;s,w,n,e' -> [(s,w,n,e)] เฉพาะกล่องเล็ก (≤ ~5 กม.) ในไทย สูงสุด 80 กล่อง"""
+    out = []
+    for part in str(s or "").split(";")[:80]:
+        try:
+            b = [float(x) for x in part.split(",")]
+        except ValueError:
+            continue
+        if len(b) != 4:
+            continue
+        so, we, no, ea = b
+        if 5 <= so < no <= 21 and 97 <= we < ea <= 106 and no - so <= 0.05 and ea - we <= 0.05:
+            out.append((so, we, no, ea))
+    return out
+
+
+def _seg_km(plat, plon, a, b) -> float:
+    """ระยะ (กม.) จากจุด p ถึงเส้นตรง a-b (ประมาณแบบระนาบ ใช้ได้ในระยะเมือง)"""
+    kx, ky = 111.32 * math.cos(math.radians(plat)), 110.57
+    ax, ay, bx, by = a["lon"] * kx, a["lat"] * ky, b["lon"] * kx, b["lat"] * ky
+    px, py = plon * kx, plat * ky
+    dx, dy = bx - ax, by - ay
+    t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def _pick_avoid(boxes: list, a: dict, b: dict, n: int = 10) -> list:
+    """เลือกจุดน้ำท่วมที่อยู่ใกล้แนวต้นทาง-ปลายทางที่สุด (TomTom รับได้สูงสุด 10 กล่อง)"""
+    corridor = max(3.0, 0.25 * _km(a["lat"], a["lon"], b["lat"], b["lon"]))
+    near = []
+    for bx in boxes:
+        d = _seg_km((bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2, a, b)
+        # ไม่หลบกล่องที่คร่อมต้นทาง/ปลายทางเอง (ไม่งั้นหาเส้นทางไม่ได้)
+        inside = any(bx[0] <= p["lat"] <= bx[2] and bx[1] <= p["lon"] <= bx[3] for p in (a, b))
+        if d <= corridor and not inside:
+            near.append((d, bx))
+    return [bx for _, bx in sorted(near)[:n]]
+
+
+def route(src: str, dst: str, avoid: str = "") -> dict:
     src, dst = (src or "").strip(), (dst or "").strip()
     if not (2 <= len(src) <= 100 and 2 <= len(dst) <= 100):
         raise TrafficError("ใส่ต้นทางและปลายทาง (2–100 ตัวอักษร)")
-    ck = _norm(src) + "|" + _norm(dst)
+    boxes = parse_avoid(avoid)
+    ck = _norm(src) + "|" + _norm(dst) + "|" + str(hash(tuple(boxes)))
     with _lock:
         hit = _route_cache.get(ck)
         if hit and time.time() - hit[0] < 180:
@@ -325,7 +369,16 @@ def route(src: str, dst: str) -> dict:
         "key": key, "traffic": "true", "maxAlternatives": 2, "routeType": "fastest",
         "travelMode": "car", "departAt": "now", "instructionsType": "text", "language": "th-TH",
         "computeTravelTimeFor": "all", "sectionType": "traffic"})
-    js = _get(url, "route")
+    chosen = _pick_avoid(boxes, a, b) if boxes else []
+    body = {"avoidAreas": {"rectangles": [
+        {"southWestCorner": {"latitude": s_, "longitude": w_}, "northEastCorner": {"latitude": n_, "longitude": e_}}
+        for s_, w_, n_, e_ in chosen]}} if chosen else None
+    try:
+        js = _get(url, "route", body=body)
+    except TrafficError:
+        if not body:
+            raise
+        js, chosen = _get(url, "route"), []      # หลบไม่ได้ (เช่น ถูกล้อมหมด) -> ใช้เส้นทางปกติ แล้วให้หน้าเว็บเตือนจุดน้ำท่วมแทน
     routes = []
     for r in js.get("routes") or []:
         sm = r.get("summary") or {}
@@ -367,6 +420,7 @@ def route(src: str, dst: str) -> dict:
     warn = (f"ต้นทาง/ปลายทางห่างกัน {far:,.0f} กม. — ถ้าไม่ใช่ที่ตั้งใจ ลองพิมพ์ชื่อให้ชัดขึ้น เช่น ใส่เขต/จังหวัด"
             if far > 150 else "")
     result = {"ok": True, "from": a, "to": b, "routes": routes, "best": best, "warn": warn,
+              "avoided": [list(bx) for bx in chosen],
               "at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "cached": False}
     with _lock:
         _route_cache[ck] = (time.time(), result)

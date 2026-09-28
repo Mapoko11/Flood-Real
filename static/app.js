@@ -6,7 +6,7 @@ const PROXY = String(window.FLOOD_PROXY || "").replace(/\/$/, "");   // Cloudfla
 const TR_OK = !STATIC || !!PROXY;                                    // ใช้ค้นรถติด/เส้นทางได้ไหม
 const TR_API = {
   traffic: q => STATIC ? `${PROXY}/traffic?q=${encodeURIComponent(q)}` : `/api/traffic?q=${encodeURIComponent(q)}`,
-  route: (a,b) => STATIC ? `${PROXY}/route?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}` : `/api/route?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}`,
+  route: (a,b,av) => (STATIC ? `${PROXY}/route` : `/api/route`) + `?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}` + (av ? `&avoid=${encodeURIComponent(av)}` : ""),
   tile: STATIC ? `${PROXY}/tile/{z}/{x}/{y}.png` : "/api/traffic-tile/{z}/{x}/{y}.png",
   usage: STATIC ? `${PROXY}/usage` : "/api/traffic-usage",
 };
@@ -29,7 +29,7 @@ async function getRadar(){
 const WL = {1:["น้อยวิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["น้ำมาก","#3b82f6"],5:["ล้นตลิ่ง","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
 const RAIN = {0:["ไม่มีฝน","#64748b"],1:["เล็กน้อย","#a5f3fc"],2:["ปานกลาง","#38bdf8"],3:["หนัก","#22c55e"],4:["หนักมาก","#f97316"]};
 const DAM = {1:["วิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["มาก","#3b82f6"],5:["เกินความจุ","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
-const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",cctv:"กล้อง CCTV"};
+const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",cctv:"กล้อง CCTV",floodboard:"Floodboard"};
 const CANAL = {critical:["ถึงระดับวิกฤต","#ef4444"],warning:["เฝ้าระวัง","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"]};
 const BMA = {flood:["น้ำท่วม","#ef4444"],minor:["ท่วมขังเล็กน้อย","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"],unknown:["ไม่ทราบ","#64748b"]};
 function bmaWet(p){ return p.state==="flood" || p.state==="minor"; }
@@ -118,7 +118,7 @@ function initMap(){
   map.on("zoomend", zcls); zcls();
   map.on("popupclose", camStop);   // ปิด popup กล้อง -> หยุดวิดีโอ ไม่กินเน็ต
   setBase(basemap);
-  ["wl","rain","dam","sat","tf","bma","canal","cctv","tr"].forEach(n => layers[n] = L.layerGroup());
+  ["wl","rain","dam","sat","tf","roads","bma","canal","cctv","tr"].forEach(n => layers[n] = L.layerGroup());
   layers.tr.addTo(map);
   $("#legend").innerHTML =
     "<b>ระดับน้ำ:</b> " + [5,4,3,2,1].map(l=>`<span><i class="dot" style="background:${WL[l][1]}"></i>${WL[l][0]}</span>`).join(" ") +
@@ -126,6 +126,7 @@ function initMap(){
     " &nbsp; <span>▲ = เขื่อน</span> &nbsp; <b>Traffy:</b> " +
     Object.entries(TF_COLOR).map(([k,c])=>`<span><i class="dot" style="background:${c};border-radius:2px"></i>${k}</span>`).join(" ") +
     " &nbsp; <b>คลอง กทม.:</b> " + ["critical","warning","normal"].map(k=>`<span><i class="dot" style="background:${CANAL[k][1]};border-radius:2px"></i>${CANAL[k][0]}</span>`).join(" ") +
+    " &nbsp; <b>เส้นถนนมีน้ำ:</b> " + [["#a855f7","ไม่ระบุ/ตื้น"],["#f97316","10–29 ซม."],["#dc2626","30–49 ซม."],["#7f1d1d","≥50 ซม./ปิด"]].map(([c,t])=>`<span><i class="dot" style="background:${c};border-radius:1px;height:4px"></i>${t}</span>`).join(" ") +
     " &nbsp; <b>ถนน กทม.:</b> " + ["flood","minor","normal"].map(k=>`<span><i class="dot" style="background:${BMA[k][1]}"></i>${BMA[k][0]}</span>`).join(" ");
 }
 
@@ -214,6 +215,13 @@ function renderMap(){
         iconSize:[12*sizeK,12*sizeK], iconAnchor:[6*sizeK,6*sizeK]});
       L.marker([t.lat,t.lon],{icon}).bindPopup(tfPopup(t),{maxWidth:260}).addTo(layers.tf);
     });
+  ((DATA.floodboard||{}).features||[]).filter(f=>!f.properties.cleared)
+    .filter(f=>match(f.properties,["name"]))
+    .forEach(f=>{
+      L.geoJSON(f, {style:{color:roadColor(f.properties), weight:7*sizeK, opacity:.85, lineCap:"round"}})
+        .bindPopup(roadPopup(f.properties)).addTo(layers.roads);
+    });
+
   ((DATA.cctv||{}).cams||[]).filter(hasLL).filter(c=>match(c,["name","org"]))
     .forEach(c=>{
       const icon = L.divIcon({className:"", html:`<div class="cam-pin" style="font-size:${Math.round(14*sizeK)}px">📷</div>`, iconSize:null, iconAnchor:[10,10]});
@@ -334,6 +342,51 @@ function renderCam(){
   });
 }
 
+/* ---------------- เส้นถนนมีน้ำ (Floodboard) ---------------- */
+function roadColor(p){
+  if(p.closedAll || (p.depth||0) >= 50) return "#7f1d1d";
+  if((p.depth||0) >= 30 || p.closedSmall) return "#dc2626";
+  if((p.depth||0) >= 10) return "#f97316";
+  return "#a855f7";   // มีน้ำ แต่ไม่ทราบความลึก / ตื้น
+}
+const VERDICT_TH = {ok:"ผ่านได้", caution:"ระวัง", avoid:"เลี่ยง", no:"ห้ามผ่าน", closed:"ปิด"};
+const VEH_TH = {car:"รถเก๋ง", motorbike:"มอเตอร์ไซค์", truck:"รถสูง/กระบะ", pickup:"กระบะ"};
+function roadPopup(p){
+  const v = Object.entries(p.verdict||{}).map(([k,x])=>`${esc(VEH_TH[k]||k)}: <b>${esc(VERDICT_TH[x]||x)}</b>`).join(" · ");
+  return `<b>🌊 ${esc(p.name||"ถนน")}</b><br>ความลึก ${p.depth!=null?`<b>${fmt(p.depth,0)} ซม.</b>`:"ไม่ระบุ"}${p.closedAll?" · <b style='color:#ef4444'>ปิดถนน</b>":p.closedSmall?" · <b style='color:#f97316'>รถเล็กห้ามผ่าน</b>":""}
+    ${v?`<br>${v}`:""}<br><small>ความมั่นใจ ${p.conf!=null?fmt(p.conf*100,0)+"%":"-"}${p.estimated?" (ประมาณ)":""} · แหล่ง: ${esc((p.sources||[]).join(", "))}<br>
+    อัปเดต ${esc(String(p.updated||"-").replace("T"," ").slice(0,16))} · ข้อมูลจาก <a href="https://floodboard.org/" target="_blank" rel="noopener">Floodboard</a></small>`;
+}
+
+/* ---------------- จุดน้ำท่วมสำหรับ "เลี่ยงน้ำ" ตอนหาเส้นทาง ---------------- */
+function floodHotspots(){
+  const out = [];
+  ((DATA&&DATA.bma||{}).points||[]).filter(p=>hasLL(p) && bmaWet(p) && (p.cm||0) >= 10).forEach(p=>{
+    const d = 0.0012;
+    out.push({box:[p.lat-d, p.lon-d, p.lat+d, p.lon+d], name:p.name, depth:p.cm, lat:p.lat, lon:p.lon});
+  });
+  ((DATA&&DATA.floodboard||{}).features||[]).forEach(f=>{
+    const p = f.properties||{};
+    if(p.cleared || !(p.closedAll || p.closedSmall || (p.depth||0) >= 10)) return;
+    const pts = JSON.stringify(f.geometry.coordinates).match(/-?\d+\.?\d*,-?\d+\.?\d*/g) || [];
+    let s=90,w=180,n=-90,e=-180;
+    pts.forEach(t=>{ const [lo,la]=t.split(",").map(Number); s=Math.min(s,la); n=Math.max(n,la); w=Math.min(w,lo); e=Math.max(e,lo); });
+    const pad = 0.0006;
+    if(n < s || n-s > 0.04 || e-w > 0.04) return;
+    out.push({box:[s-pad, w-pad, n+pad, e+pad], name:p.name, depth:p.depth, lat:(s+n)/2, lon:(w+e)/2});
+  });
+  return out;
+}
+function routeFloodHits(line, spots){
+  const hit = new Set();
+  const inBox = (la,lo)=>spots.forEach((h,k)=>{ const b=h.box; if(la>=b[0]&&la<=b[2]&&lo>=b[1]&&lo<=b[3]) hit.add(k); });
+  for(let i=0;i<line.length;i++){
+    inBox(line[i][0], line[i][1]);
+    if(i+1<line.length) for(let t=1;t<4;t++) inBox(line[i][0]+(line[i+1][0]-line[i][0])*t/4, line[i][1]+(line[i+1][1]-line[i][1])*t/4);
+  }
+  return [...hit].map(k=>spots[k]);
+}
+
 function canalPopup(p){
   const row=(t,v,w,c)=>v==null?"":`<tr><td>${t}</td><td class="num"><b>${fmt(v,2)}</b></td><td class="num">${w==null?"-":fmt(w,2)}</td><td class="num">${c==null?"-":fmt(c,2)}</td></tr>`;
   return `<b>🏙️ ${esc(p.name)}</b> ${pill(CANAL,p.state)}<br><small>${esc(p.full)} · เขต${esc(p.district)}</small>
@@ -372,7 +425,7 @@ function loadSat(force){
 }
 
 function syncLayers(){
-  const m = {wl:"#lyWl", rain:"#lyRain", dam:"#lyDam", sat:"#lySat", tf:"#lyTraffy", bma:"#lyBma", canal:"#lyCanal", cctv:"#lyCctv"};
+  const m = {wl:"#lyWl", rain:"#lyRain", dam:"#lyDam", sat:"#lySat", tf:"#lyTraffy", roads:"#lyRoads", bma:"#lyBma", canal:"#lyCanal", cctv:"#lyCctv"};
   for(const [k,sel] of Object.entries(m)){
     if($(sel).checked) layers[k].addTo(map); else map.removeLayer(layers[k]);
   }
@@ -772,10 +825,12 @@ function rtCard(r, i){
   const col = r.best ? "#22c55e" : RT_COLORS[i % 3];
   return `<div class="rt-card ${r.best?"best":""}" data-i="${i}" style="border-left-color:${col}">
     <div class="h"><span class="t">${fmt(r.minutes,0)} นาที</span><span>${fmt(r.km,1)} กม.</span>
-      ${r.best ? `<span class="pill" style="background:#22c55e">แนะนำ · เร็วสุด</span>` : (r.saves_min===0?"":"")}
+      ${r.best ? `<span class="pill" style="background:#22c55e">${r.floodRec?"แนะนำ · เลี่ยงน้ำ":"แนะนำ · เร็วสุด"}</span>` : (r.saves_min===0?"":"")}
       ${r.delay_min ? `<span style="color:#f97316">ติดรวม +${fmt(r.delay_min,0)} นาที</span>` : `<span style="color:#22c55e">ไม่ค่อยติด</span>`}
       ${r.arrive ? `<span class="muted">ถึงประมาณ ${esc(r.arrive)} น.</span>` : ""}</div>
     <div>ผ่าน: <b>${r.via.map(esc).join(" → ") || "-"}</b></div>
+    ${r.floods ? (r.floods.length ? `<div style="color:#ef4444">🌊 ผ่านจุดน้ำท่วม ${r.floods.length} จุด${r.floods.some(f=>f.depth)?` (ลึกสุด ${fmt(Math.max(...r.floods.map(f=>f.depth||0)),0)} ซม.)`:""}: ${r.floods.slice(0,4).map(f=>esc(f.name)).join(", ")}${r.floods.length>4?" …":""}</div>`
+      : `<div style="color:#22c55e">✅ ไม่ผ่านจุดน้ำท่วมที่มีข้อมูล</div>`) : ""}
     ${r.best && rtLast && rtLast.routes.length>1 ? `<div class="muted">เร็วกว่าเส้นที่ช้าสุด ${fmt(r.saves_min,0)} นาที</div>` : ""}
     <details><summary>ดูเส้นทางทีละขั้น (${r.steps.length})</summary><ol>${r.steps.map(x=>`<li>${esc(x.text)} <span class="muted">(${fmt(x.km,1)} กม.)</span></li>`).join("")}</ol></details>
   </div>`;
@@ -787,6 +842,8 @@ function rtDraw(j, focus){
     const on = focus===undefined ? r.best : focus===i;
     L.polyline(r.line, {color:col, weight: on ? 8 : 5, opacity: on ? .95 : .45}).addTo(layers.tr)
       .bindPopup(`${fmt(r.minutes,0)} นาที · ${fmt(r.km,1)} กม. · ผ่าน ${r.via.map(esc).join(" → ")}`);
+    if(on && r.floods) r.floods.forEach(f=>L.marker([f.lat,f.lon],{icon:trPin(`🌊 ${f.depth?fmt(f.depth,0)+" ซม.":"น้ำ"}`,"#ef4444"), zIndexOffset:900}).addTo(layers.tr)
+      .bindPopup(`<b>จุดน้ำท่วมบนเส้นทางนี้</b><br>${esc(f.name)}${f.depth?` · ${fmt(f.depth,0)} ซม.`:""}`));
     if(on) r.jams.forEach(jm=>L.polyline(jm.line,{color: TR_COLOR[jm.magnitude]||"#ef4444", weight:9, opacity:.9}).addTo(layers.tr)
       .bindPopup(`ช่วงรถติด ช้า +${fmt(jm.delay_min,0)} นาที${jm.speed?` · วิ่งได้ ~${fmt(jm.speed,0)} กม./ชม.`:""}`));
   });
@@ -797,10 +854,19 @@ async function rtSearch(){
   const a = $("#rtFrom").value.trim(), b = $("#rtTo").value.trim(); if(!a || !b) return;
   $("#rtBtn").disabled = true; $("#rtInfo").textContent = "กำลังคำนวณเส้นทางจากสภาพจราจรตอนนี้…"; $("#rtList").innerHTML = "";
   try{
-    const j = await fetch(TR_API.route(a,b)).then(r=>r.json());
+    const avoidOn = $("#rtAvoid").checked;
+    const spots = avoidOn ? floodHotspots() : [];
+    const av = spots.slice(0, 80).map(h=>h.box.map(x=>x.toFixed(5)).join(",")).join(";");
+    const j = await fetch(TR_API.route(a,b,av)).then(r=>r.json());
     if(!j.ok){ $("#rtInfo").textContent = "⚠ " + (j.error||"หาเส้นทางไม่สำเร็จ"); return; }
     rtLast = j;
+    if(avoidOn){   // นับจุดน้ำท่วมที่แต่ละเส้นผ่าน แล้วแนะนำเส้นที่ผ่านน้อยสุด (เท่ากันเลือกเร็วสุด)
+      j.routes.forEach(r=>{ r.floods = routeFloodHits(r.line, spots); });
+      let rec = 0; j.routes.forEach((r,i)=>{ const q=j.routes[rec]; if(r.floods.length < q.floods.length || (r.floods.length===q.floods.length && r.minutes < q.minutes)) rec = i; });
+      j.routes.forEach((r,i)=>{ r.best = i===rec; r.floodRec = true; });
+    }
     $("#rtInfo").innerHTML = `<b>${esc(j.from.name)}</b> → <b>${esc(j.to.name)}</b> · ${j.routes.length} เส้นทาง (จราจร ${esc(j.at.slice(11,16))} น.) · กดการ์ดเพื่อดูบนแผนที่`
+      + (avoidOn ? `<div>🌊 เลี่ยงน้ำ: รู้จุดน้ำท่วม ${spots.length} จุด · สั่งให้เส้นทางหลบ ${(j.avoided||[]).length} จุดที่อยู่ในแนวทาง</div>` : "")
       + (j.warn ? `<div class="warn" style="margin-top:6px">⚠ ${esc(j.warn)}</div>` : "");
     $("#rtList").innerHTML = j.routes.map(rtCard).join("");
     $("#rtList").querySelectorAll(".rt-card").forEach(el=>el.addEventListener("click",ev=>{
@@ -848,7 +914,7 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
   document.querySelectorAll(".seg[data-seg=sat] button").forEach(x=>x.classList.toggle("active", x.dataset.p===satPeriod));
   renderKpis(); renderSat(); if(map) loadSat(true);
 }));
-["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy","#lyBma","#lyCanal","#lyCctv"].forEach(s=>$(s).addEventListener("change", syncLayers));
+["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy","#lyRoads","#lyBma","#lyCanal","#lyCctv"].forEach(s=>$(s).addEventListener("change", syncLayers));
 $("#lySat").addEventListener("change", ()=>{ if(map) loadSat(); });
 $("#tfState").addEventListener("change", renderTraffy);
 $("#bmaShow").addEventListener("change", renderBma);
