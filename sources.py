@@ -809,6 +809,47 @@ def fetch_bma_canal() -> dict:
             "source": "https://weather.bangkok.go.th/water"}
 
 
+
+# ---------------------------------------------------------------- กล้อง CCTV (iTIC Foundation / กรมทางหลวง ผ่าน Longdo Traffic)
+CCTV_URL = "https://camera.longdo.com/feed/?command=json"
+CCTV_EVERY_MINUTES = 60      # รายชื่อกล้องแทบไม่เปลี่ยน ดึงชั่วโมงละครั้งพอ (ภาพจริงเบราว์เซอร์โหลดจากต้นทางเอง)
+
+
+def _https(u) -> str:
+    u = str(u or "").strip()
+    return u if u.startswith("https://") and len(u) < 400 else ""
+
+
+def fetch_cctv() -> dict:
+    if not CFG.get("CCTV_ENABLED", True):
+        return {"configured": False, "cams": []}
+    old = load_cache().get("cctv") or {}
+    if old.get("cams") is not None and _minutes_since(old.get("at")) < CCTV_EVERY_MINUTES:
+        return old
+    rows = _get_json(CFG.get("CCTV_URL") or CCTV_URL)
+    if not isinstance(rows, list):
+        raise ValueError("รูปแบบข้อมูลกล้องเปลี่ยนไป")
+    cams = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        lat, lon = _num(r.get("latitude")), _num(r.get("longitude"))
+        img, hls, page = _https(r.get("imgurl")), _https(r.get("hls_url")), _https(r.get("link") or r.get("vdourl"))
+        if lat is None or lon is None or not (img or hls or page):
+            continue
+        cams.append({
+            "id": str(r.get("camid") or "")[:40],
+            "name": str(r.get("title") or "").strip()[:160],
+            "org": str(r.get("organization") or "").strip()[:60],
+            "lat": lat, "lon": lon, "img": img, "hls": hls, "page": page,
+            "bkk": str(r.get("geocode") or "").startswith("10"),
+        })
+    if not cams:
+        raise ValueError("ไม่มีกล้องในฟีด")
+    return {"configured": True, "at": _now(), "cams": cams, "count": len(cams),
+            "source": "https://traffic.longdo.com/cameralist"}
+
+
 SOURCES = {
     "waterlevel": fetch_waterlevel,
     "rain": fetch_rain,
@@ -818,6 +859,7 @@ SOURCES = {
     "traffy": fetch_traffy,
     "bma": fetch_bma,
     "bma_canal": fetch_bma_canal,
+    "cctv": fetch_cctv,
 }
 
 

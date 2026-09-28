@@ -42,6 +42,10 @@ DEFAULTS = {
     # ดึงผ่าน Cloudflare Worker ก่อน (ใช้ IP คนละชุด + cache 10 นาที) ถ้าไม่ได้ค่อยดึงตรง  ใส่ "" = ดึงตรงอย่างเดียว
     "BMA_PROXY_URL": "https://floodreal-proxy.cheabracha0920.workers.dev/bma",
 
+    # ---- กล้อง CCTV (iTIC / กรมทางหลวง ผ่าน Longdo) — ไม่ต้องใช้ key ----
+    "CCTV_ENABLED": True,
+    "CCTV_URL": "https://camera.longdo.com/feed/?command=json",
+
     # ---- TomTom Traffic (รถติด) — สมัคร key ฟรีที่ developer.tomtom.com ----
     "TOMTOM_API_KEY": "",
     "TRAFFIC_CACHE_MINUTES": 5,    # ถนนเดิมค้นซ้ำภายในกี่นาทีใช้ผลเดิม (ประหยัดโควตา 2,500/เดือน)

@@ -203,3 +203,10 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .zoom-near .leaflet-tooltip.canal-lbl{display:block}
 .canal-tbl{border-collapse:collapse;margin:4px 0;font-size:12.5px}
 .canal-tbl th,.canal-tbl td{padding:1px 6px;border-bottom:1px solid #8883}
+/* กล้อง CCTV */
+.cam-pin{line-height:1;filter:drop-shadow(0 0 2px #000)}
+.cam-pop{min-width:260px}
+.cam-view{margin:6px 0;min-height:60px;background:#0b1220;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.cam-view img,.cam-view video{width:100%;max-height:240px;object-fit:contain;display:block}
+.cam-msg{color:#cbd5e1;font-size:12.5px;padding:10px;text-align:center}
+.cam-btns{display:flex;gap:6px;flex-wrap:wrap}

@@ -29,7 +29,7 @@ async function getRadar(){
 const WL = {1:["น้อยวิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["น้ำมาก","#3b82f6"],5:["ล้นตลิ่ง","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
 const RAIN = {0:["ไม่มีฝน","#64748b"],1:["เล็กน้อย","#a5f3fc"],2:["ปานกลาง","#38bdf8"],3:["หนัก","#22c55e"],4:["หนักมาก","#f97316"]};
 const DAM = {1:["วิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["มาก","#3b82f6"],5:["เกินความจุ","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
-const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม."};
+const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",cctv:"กล้อง CCTV"};
 const CANAL = {critical:["ถึงระดับวิกฤต","#ef4444"],warning:["เฝ้าระวัง","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"]};
 const BMA = {flood:["น้ำท่วม","#ef4444"],minor:["ท่วมขังเล็กน้อย","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"],unknown:["ไม่ทราบ","#64748b"]};
 function bmaWet(p){ return p.state==="flood" || p.state==="minor"; }
@@ -116,8 +116,9 @@ function initMap(){
   map = L.map("map", {preferCanvas:true}).setView([13.2, 101.0], 6);
   const zcls = ()=>map.getContainer().classList.toggle("zoom-near", map.getZoom()>=12);
   map.on("zoomend", zcls); zcls();
+  map.on("popupclose", camStop);   // ปิด popup กล้อง -> หยุดวิดีโอ ไม่กินเน็ต
   setBase(basemap);
-  ["wl","rain","dam","sat","tf","bma","canal","tr"].forEach(n => layers[n] = L.layerGroup());
+  ["wl","rain","dam","sat","tf","bma","canal","cctv","tr"].forEach(n => layers[n] = L.layerGroup());
   layers.tr.addTo(map);
   $("#legend").innerHTML =
     "<b>ระดับน้ำ:</b> " + [5,4,3,2,1].map(l=>`<span><i class="dot" style="background:${WL[l][1]}"></i>${WL[l][0]}</span>`).join(" ") +
@@ -213,6 +214,12 @@ function renderMap(){
         iconSize:[12*sizeK,12*sizeK], iconAnchor:[6*sizeK,6*sizeK]});
       L.marker([t.lat,t.lon],{icon}).bindPopup(tfPopup(t),{maxWidth:260}).addTo(layers.tf);
     });
+  ((DATA.cctv||{}).cams||[]).filter(hasLL).filter(c=>match(c,["name","org"]))
+    .forEach(c=>{
+      const icon = L.divIcon({className:"", html:`<div class="cam-pin" style="font-size:${Math.round(14*sizeK)}px">📷</div>`, iconSize:null, iconAnchor:[10,10]});
+      L.marker([c.lat,c.lon],{icon}).bindPopup(()=>camPopup(c),{maxWidth:360, minWidth:280}).addTo(layers.cctv);
+    });
+
   ((DATA.bma_canal||{}).points||[]).filter(hasLL).filter(p=>p.state!=="down")
     .filter(p=>match(p,["name","full","district"]))
     .filter(p=>!risk || p.state==="critical" || p.state==="warning")
@@ -240,6 +247,41 @@ function renderMap(){
     });
   loadSat();
   syncLayers();
+}
+
+/* ---------------- กล้อง CCTV (iTIC) ---------------- */
+let camHls = null;
+function camPopup(c){
+  const box = document.createElement("div"); box.className = "cam-pop";
+  box.innerHTML = `<b>📷 ${esc(c.name)}</b><br><small>${esc(c.org)} · ภาพจาก iTIC Foundation / Longdo Traffic</small>
+    <div class="cam-view"><div class="cam-msg">กำลังโหลดภาพ… (เซิร์ฟเวอร์กล้องอาจช้า 10–20 วินาที)</div></div>
+    <div class="cam-btns">${c.hls?`<button class="btn btn-ghost cam-live">▶ วิดีโอสด</button>`:""}
+    ${c.page?`<a class="btn btn-ghost" href="${safeUrl(c.page)}" target="_blank" rel="noopener">เปิดหน้ากล้อง ↗</a>`:""}</div>`;
+  const view = box.querySelector(".cam-view");
+  if(c.img){
+    const im = new Image(); im.alt = ""; im.referrerPolicy = "no-referrer";
+    im.onload = ()=>{ view.innerHTML = ""; view.appendChild(im); };
+    im.onerror = ()=>{ view.innerHTML = `<div class="cam-msg">กล้องนี้ไม่มีภาพนิ่งตอนนี้${c.hls?" — ลองกด ▶ วิดีโอสด":""}</div>`; };
+    im.src = c.img + (c.img.includes("?")?"&":"?") + "t=" + Date.now();
+  } else view.innerHTML = `<div class="cam-msg">กล้องนี้มีแต่วิดีโอ กด ▶ วิดีโอสด</div>`;
+  const live = box.querySelector(".cam-live");
+  if(live) live.addEventListener("click", ()=>camPlay(c, view));
+  return box;
+}
+function camStop(){ if(camHls){ try{ camHls.destroy(); }catch(e){} camHls = null; } }
+async function camPlay(c, view){
+  camStop();
+  const v = document.createElement("video"); v.muted = true; v.autoplay = true; v.playsInline = true; v.controls = true;
+  view.innerHTML = ""; view.appendChild(v);
+  const fail = ()=>{ view.innerHTML = `<div class="cam-msg">เปิดวิดีโอสดไม่ได้ (กล้องอาจปิดอยู่)</div>`; };
+  if(v.canPlayType("application/vnd.apple.mpegurl")){ v.src = c.hls; v.onerror = fail; return; }
+  try{
+    if(!window.Hls) await new Promise((ok,no)=>{ const sc=document.createElement("script");
+      sc.src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"; sc.onload=ok; sc.onerror=no; document.head.appendChild(sc); });
+    if(!window.Hls || !Hls.isSupported()) return fail();
+    camHls = new Hls({maxBufferLength:10}); camHls.loadSource(c.hls); camHls.attachMedia(v);
+    camHls.on(Hls.Events.ERROR, (_,d)=>{ if(d && d.fatal){ camStop(); fail(); } });
+  }catch(e){ fail(); }
 }
 
 function canalPopup(p){
@@ -280,7 +322,7 @@ function loadSat(force){
 }
 
 function syncLayers(){
-  const m = {wl:"#lyWl", rain:"#lyRain", dam:"#lyDam", sat:"#lySat", tf:"#lyTraffy", bma:"#lyBma", canal:"#lyCanal"};
+  const m = {wl:"#lyWl", rain:"#lyRain", dam:"#lyDam", sat:"#lySat", tf:"#lyTraffy", bma:"#lyBma", canal:"#lyCanal", cctv:"#lyCctv"};
   for(const [k,sel] of Object.entries(m)){
     if($(sel).checked) layers[k].addTo(map); else map.removeLayer(layers[k]);
   }
@@ -739,7 +781,7 @@ document.querySelectorAll(".seg[data-seg=sat] button").forEach(b=>b.addEventList
   document.querySelectorAll(".seg[data-seg=sat] button").forEach(x=>x.classList.toggle("active", x.dataset.p===satPeriod));
   renderKpis(); renderSat(); if(map) loadSat(true);
 }));
-["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy","#lyBma","#lyCanal"].forEach(s=>$(s).addEventListener("change", syncLayers));
+["#lyWl","#lyRain","#lyDam","#lySat","#lyTraffy","#lyBma","#lyCanal","#lyCctv"].forEach(s=>$(s).addEventListener("change", syncLayers));
 $("#lySat").addEventListener("change", ()=>{ if(map) loadSat(); });
 $("#tfState").addEventListener("change", renderTraffy);
 $("#bmaShow").addEventListener("change", renderBma);
