@@ -71,6 +71,12 @@ def main() -> int:
     html = html.replace('"/static/', '"static/')
     proxy = json.dumps(os.environ.get("TRAFFIC_PROXY_URL", "").strip())   # Worker ซ่อน key (ไม่ใช่ความลับ)
     html = html.replace("<script src=", f"<script>window.FLOOD_STATIC=true;window.FLOOD_PROXY={proxy};</script>\n<script src=", 1)
+    # นับผู้เข้าชม: Cloudflare Web Analytics (ไม่ใช้คุกกี้, token ไม่ใช่ความลับ) — ใส่เฉพาะเว็บ github.io
+    cf_token = os.environ.get("CF_BEACON_TOKEN", "cad73c7e87694fa6af05ae26be438d38").strip()
+    if cf_token:
+        beacon = ("<script defer src=\"https://static.cloudflareinsights.com/beacon.min.js\" "
+                  f"data-cf-beacon='{{\"token\": \"{cf_token}\"}}'></script>\n")
+        html = html.replace("</body>", beacon + "</body>", 1)
     html = html.replace(f"อัปเดตอัตโนมัติทุก {CFG['FETCH_EVERY_MINUTES']} นาที",
                         f"อัปเดตอัตโนมัติทุก ~{EVERY} นาที (GitHub)")
     with open(os.path.join(SITE, "index.html"), "w", encoding="utf-8") as f:
