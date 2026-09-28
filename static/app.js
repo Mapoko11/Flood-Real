@@ -798,22 +798,74 @@ const TR_COLOR = {0:"#94a3b8",1:"#facc15",2:"#f97316",3:"#ef4444",4:"#7f1d1d"};
 const TR_QUICK = ["วิภาวดีรังสิต","พหลโยธิน","พระราม 2","บางนา-ตราด","รามอินทรา","แจ้งวัฒนะ","ลาดพร้าว","สุขุมวิท"];
 let flowLayer = null, trLast = null;
 function trPin(txt, bg){ return L.divIcon({className:"", html:`<div class="tr-pin" style="border:2px solid ${bg}">${esc(txt)}</div>`, iconSize:null}); }
+/* ป้ายเหตุการณ์: TomTom มักขึ้น "ปิดถนน" ทั้งที่แค่รถหยุดนิ่ง -> เทียบกับข้อมูลน้ำท่วมจริงก่อน แล้วค่อยตั้งป้าย */
+const TR_MAG = {0:"ไม่ทราบ",1:"เล็กน้อย",2:"ปานกลาง",3:"ติดหนัก",4:"หยุดนิ่ง"};
+const TR_NEAR_M = 150;
+const TR_CLOSE_RE = /ก่อสร้าง|ซ่อม|งานถนน|ขบวน|พิธี|กิจกรรม|อุบัติเหตุ|ชน|construction|roadworks|event|accident|parade/i;
+function trFloodSpots(){
+  const out = [];
+  ((DATA&&DATA.bma||{}).points||[]).filter(p=>hasLL(p) && bmaWet(p) && (p.cm||0) >= 5)
+    .forEach(p=>out.push({lat:p.lat, lon:p.lon, depth:p.cm, src:"เซนเซอร์ กทม.", name:p.name}));
+  ((DATA&&DATA.floodboard||{}).features||[]).forEach(f=>{
+    const p = f.properties||{};
+    if(p.cleared || !(p.closedAll || p.closedSmall || (p.depth||0) >= 5)) return;
+    const pts = JSON.stringify(f.geometry.coordinates).match(/-?\d+\.?\d*,-?\d+\.?\d*/g) || [];
+    pts.forEach(t=>{ const [lo,la]=t.split(",").map(Number); out.push({lat:la, lon:lo, depth:p.depth, src:"Floodboard", name:p.name}); });
+  });
+  ((DATA&&DATA.traffy||{}).items||[]).filter(t=>hasLL(t) && tfOpen(t) && (t.types||[]).some(x=>/น้ำท่วม/.test(x)))
+    .forEach(t=>out.push({lat:t.lat, lon:t.lon, depth:null, src:"Traffy แจ้ง", name:t.address||t.district}));
+  return out;
+}
+function trDistM(a1,o1,a2,o2){ const k=111320; return Math.hypot((o2-o1)*k*Math.cos(a1*Math.PI/180), (a2-a1)*k); }
+function trFloodNear(line, spots){
+  if(!line || !line.length || !spots.length) return null;
+  let s=90,w=180,n=-90,e=-180; line.forEach(([la,lo])=>{ s=Math.min(s,la); n=Math.max(n,la); w=Math.min(w,lo); e=Math.max(e,lo); });
+  const pad = 0.0015, cand = spots.filter(p=>p.lat>=s-pad && p.lat<=n+pad && p.lon>=w-pad && p.lon<=e+pad);
+  if(!cand.length) return null;
+  let best = null;
+  for(let i=0;i<line.length;i++){
+    const nxt = line[i+1] || line[i];
+    for(let t=0;t<(i+1<line.length?3:1);t++){
+      const la = line[i][0]+(nxt[0]-line[i][0])*t/3, lo = line[i][1]+(nxt[1]-line[i][1])*t/3;
+      cand.forEach(p=>{ const d = trDistM(la,lo,p.lat,p.lon);
+        if(d <= TR_NEAR_M && (!best || (p.depth||0) > (best.depth||0) || (!best.depth && d < best.d))) best = {...p, d}; });
+    }
+  }
+  return best;
+}
+function trClassify(it, spots){
+  const raw = `TomTom ระบุ: ${it.category}${it.magnitude_text ? " · " + it.magnitude_text : ""}`;
+  const ev = (it.events||[]).join(" ");
+  const fl = trFloodNear(it.line, spots);
+  if(fl) return {kind:"flood", icon:"🌊", color:"#0284c7",
+    label:`น้ำท่วมขัง${fl.depth ? ` ~${fmt(fl.depth,0)} ซม.` : ""}`,
+    note:`ยืนยันจาก ${fl.src}${fl.name ? ` (${fl.name})` : ""} ห่าง ~${fmt(fl.d,0)} ม. · ${raw}`};
+  if(it.cat === 11) return {kind:"flood", icon:"🌊", color:"#0284c7", label:"น้ำท่วม (TomTom)", note:"ยังไม่มีข้อมูล กทม./Floodboard ยืนยันจุดนี้"};
+  if(it.cat === 7 || it.cat === 8){
+    if(TR_CLOSE_RE.test(ev)) return {kind:"closed", icon:"⛔", color:"#7f1d1d", label: it.cat===8 ? "ปิดถนน" : "ปิดช่องจราจร", note:"มีสาเหตุระบุ: " + ev};
+    return {kind:"jam", icon:"🚦", color:TR_COLOR[4], label:"รถหยุดนิ่ง / ติดสะสม",
+      note:`${raw} — แต่ไม่พบงานก่อสร้าง อุบัติเหตุ หรือน้ำท่วมยืนยัน มักเป็นรถติดสะสมหน้าไฟแดง/คอขวด`};
+  }
+  if(it.cat === 6) return {kind:"jam", icon:"🚗", color:TR_COLOR[it.magnitude]||TR_COLOR[0], label:`รถติด · ${TR_MAG[it.magnitude]||""}`, note:""};
+  return {kind:"other", icon:"⚠️", color:TR_COLOR[it.magnitude]||TR_COLOR[0], label:it.category + (it.magnitude ? ` · ${TR_MAG[it.magnitude]||""}` : ""), note:""};
+}
 function trCard(it, i){
-  const c = TR_COLOR[it.magnitude] || TR_COLOR[0];
-  const jam = it.cat === 6;
+  const k = it.k || trClassify(it, []);
+  const c = k.color;
+  const jam = k.kind === "jam";
   return `<div class="tr-item" data-i="${i}" style="border-left-color:${c}">
-    <div class="h"><span class="pill" style="background:${c};color:${it.magnitude===1?'#111':'#fff'}">${esc(it.category)} · ${esc(it.magnitude_text)}</span>
+    <div class="h"><span class="pill" style="background:${c};color:${it.magnitude===1&&k.kind==="jam"?'#111':'#fff'}">${k.icon} ${esc(k.label)}</span>
       ${it.length_km ? `<span class="big">${fmt(it.length_km,1)} กม.</span>` : ""}
       ${it.delay_min ? `<span class="big" style="color:${c}">+${fmt(it.delay_min,0)} นาที</span>` : ""}
       ${it.on_road ? `<span class="tag">บนถนนที่ค้น</span>` : `<span class="tag">ถนนใกล้เคียง</span>`}</div>
-    <div class="route">${jam ? "🚗 ท้ายแถว" : "จาก"}: <b>${esc(it.tail||"-")}</b><br>${jam ? "🚦 หัวแถว (จุดที่ติด)" : "ถึง"}: <b>${esc(it.head||"-")}</b></div>
-    ${it.events.length ? `<div class="muted">${it.events.map(esc).join(" · ")}</div>` : ""}
+    <div class="route">${jam ? "🚗 ท้ายแถว (ปลายคิว รถเข้ามาต่อ)" : "จาก"}: <b>${esc(it.tail||"-")}</b><br>${jam ? "🚦 หัวแถว (จุดที่ติด ต้นเหตุ)" : "ถึง"}: <b>${esc(it.head||"-")}</b></div>
+    ${k.note ? `<div class="muted tr-note">ℹ️ ${esc(k.note)}</div>` : (it.events.length ? `<div class="muted">${it.events.map(esc).join(" · ")}</div>` : "")}
   </div>`;
 }
 function trDraw(res){
   layers.tr.clearLayers();
   (res.items||[]).forEach((it,i)=>{
-    const c = TR_COLOR[it.magnitude] || TR_COLOR[0];
+    const c = (it.k && it.k.color) || TR_COLOR[it.magnitude] || TR_COLOR[0];
     const line = L.polyline(it.line, {color:c, weight: it.on_road ? 8 : 4, opacity: it.on_road ? .95 : .35, dashArray: it.on_road ? null : "6 6"}).addTo(layers.tr);
     line.bindPopup(trCard(it,i).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280});
   });
@@ -824,33 +876,180 @@ function trFocus(it){
     const b = L.latLngBounds(it.line); map.fitBounds(b.pad(0.25), {maxZoom:16});
     const c = TR_COLOR[it.magnitude] || TR_COLOR[0];
     if(it.line.length > 1){
-      L.marker(it.line[0], {icon:trPin("ท้ายแถว", c)}).addTo(layers.tr);
-      L.marker(it.line[it.line.length-1], {icon:trPin("หัวแถว", c)}).addTo(layers.tr);
+      L.marker(it.line[0], {icon:trPin("🚗 ท้ายแถว (ปลายคิว)", c)}).addTo(layers.tr);
+      L.marker(it.line[it.line.length-1], {icon:trPin("🚦 หัวแถว (จุดที่ติด)", c)}).addTo(layers.tr);
     }
   }, 150);
+}
+/* ---- แผนที่เล็กในแท็บรถติด: เห็นผลทันทีไม่ต้องสลับไปแท็บแผนที่ (มีสีความเร็วรถ TomTom ซ้อน) ---- */
+let trMini = null, trMiniLy = null;
+function trMiniShow(draw){
+  const el = $("#trMap"); if(!el) return;
+  el.style.display = "block";
+  if(!trMini){
+    trMini = L.map("trMap", {zoomControl:true, preferCanvas:true}).setView([13.76,100.55], 12);
+    L.tileLayer(ESRI+"World_Street_Map/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, attribution:ATTR + " | จราจร: TomTom"}).addTo(trMini);
+    L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.75, zIndex:300}).addTo(trMini);
+    trMiniLy = L.layerGroup().addTo(trMini);
+  }
+  trMiniLy.clearLayers();
+  const b = draw(trMiniLy);
+  setTimeout(()=>{ trMini.invalidateSize(); if(b && b.isValid()) trMini.fitBounds(b.pad(0.12), {maxZoom:16}); }, 60);
+}
+function trMiniFocus(line, color){
+  if(!trMini || !line || !line.length) return false;
+  $("#trMap").scrollIntoView({behavior:"smooth", block:"center"});
+  trMini.fitBounds(L.latLngBounds(line).pad(0.3), {maxZoom:17});
+  if(line.length > 1){
+    L.marker(line[0], {icon:trPin("🚗 ท้ายแถว (ปลายคิว)", color)}).addTo(trMiniLy);
+    L.marker(line[line.length-1], {icon:trPin("🚦 หัวแถว (จุดที่ติด)", color)}).addTo(trMiniLy);
+  }
+  return true;
+}
+/* ---- ค้นช่วงถนน "A ถึง B": ใช้เส้นทาง TomTom (มีช่วงรถติดรายช่วง) บอกว่ารถสะสมจากตรงไหนถึงตรงไหน ---- */
+const TR_SPLIT = /\s+ถึง\s+|\s*(?:→|->)\s*|\s+-\s+/;
+function trCum(line){ const c=[0]; for(let i=1;i<line.length;i++) c.push(c[i-1] + trDistM(line[i-1][0],line[i-1][1],line[i][0],line[i][1])); return c; }
+function trNearestIdx(line, pt){ let bi=0, bd=Infinity; line.forEach((p,i)=>{ const d=trDistM(p[0],p[1],pt[0],pt[1]); if(d<bd){bd=d; bi=i;} }); return bi; }
+function trStepAt(steps, km){ let t=""; (steps||[]).forEach(s=>{ if(s.km <= km + 0.05) t = s.text; }); return t; }
+/* จุดสังเกตใกล้ตำแหน่ง: ใช้ชื่อกล้อง CCTV / เซนเซอร์ กทม. ที่เรามีอยู่แล้ว (ไม่เสียโควตา TomTom) */
+function trLandmark(pt, maxM=450){
+  if(!pt) return null;
+  let best = null;
+  const cand = [];
+  ((DATA&&DATA.cctv||{}).cams||[]).forEach(c=>{ if(hasLL(c) && c.name) cand.push({lat:c.lat, lon:c.lon, name:c.name}); });
+  ((DATA&&DATA.bma||{}).points||[]).forEach(p=>{ if(hasLL(p) && p.name) cand.push({lat:p.lat, lon:p.lon, name:(p.road ? p.road + " " : "") + p.name}); });
+  cand.forEach(c=>{
+    if(Math.abs(c.lat-pt[0]) > 0.006 || Math.abs(c.lon-pt[1]) > 0.006) return;
+    const d = trDistM(pt[0],pt[1],c.lat,c.lon);
+    if(d <= maxM && (!best || d < best.d)) best = {...c, d};
+  });
+  return best;
+}
+function trLmTxt(lm){ return lm ? `ใกล้ ${esc(lm.name.replace(/^\s*(กล้อง|CCTV)\s*/i,""))} <span class="muted">(~${fmt(Math.round(lm.d/10)*10,0)} ม.)</span>` : ""; }
+async function trSegment(a, b){
+  $("#trInfo").textContent = `กำลังดูสภาพจราจรช่วง ${a} → ${b}…`;
+  const j = await fetch(TR_API.route(a, b)).then(r=>r.json());
+  if(!j.ok){ $("#trInfo").textContent = "⚠ " + (j.error || "หาช่วงถนนไม่สำเร็จ"); return; }
+  const r = j.routes[0];                                  // เส้นทางหลักของ TomTom (ปกติคือถนนที่ตั้งใจ)
+  const cum = trCum(r.line), totKm = cum[cum.length-1]/1000 || r.km;
+  const spots = trFloodSpots();
+  let jams = (r.jams||[]).map(jm=>{
+    const i0 = trNearestIdx(r.line, jm.line[0]), i1 = trNearestIdx(r.line, jm.line[jm.line.length-1]);
+    const s = cum[Math.min(i0,i1)]/1000, e = cum[Math.max(i0,i1)]/1000;
+    const len = trCum(jm.line).pop()/1000;
+    return {...jm, s, e: Math.max(e, s+len*0.9), len};
+  }).sort((x,y)=>x.s-y.s);
+  // ต่อช่วงที่ห่างกันไม่ถึง 200 ม. เป็นคิวเดียว (TomTom มักแบ่งคิวยาวเป็นหลายท่อน)
+  const merged = [];
+  jams.forEach(x=>{
+    const p = merged[merged.length-1];
+    if(p && x.s - p.e < 0.2){ p.e = Math.max(p.e, x.e); p.len += x.len; p.line = p.line.concat(x.line);
+      p.delay_min = (p.delay_min||0) + (x.delay_min||0); p.magnitude = Math.max(p.magnitude, x.magnitude);
+      p.speed = p.speed && x.speed ? Math.min(p.speed, x.speed) : (p.speed || x.speed); p.parts++; }
+    else merged.push({...x, line:x.line.slice(), parts:1});
+  });
+  jams = merged.map(x=>({...x, len: Math.max(x.len, x.e - x.s), flood: trFloodNear(x.line, spots),
+    tailLm: trLandmark(x.line[0]), headLm: trLandmark(x.line[x.line.length-1]), tailTxt: trStepAt(r.steps, x.s)}));
+  const jamKm = jams.reduce((t,x)=>t+x.len,0);
+  const atB = jams.filter(x=>totKm - x.e <= 0.3).pop();     // คิวที่หัวแถวอยู่ที่ B
+  const head = `<b>A</b> ${esc(j.from.name)} → <b>B</b> ${esc(j.to.name)} · ${fmt(totKm,1)} กม. ผ่าน ${r.via.map(esc).join(" → ")||"-"}`;
+  let qTxt;
+  if(atB){
+    const toA = atB.s;
+    qTxt = `<div class="tr-queue">🚦 <b>หัวแถว (จุดที่ติด) อยู่ที่ B (${esc(j.to.name)})</b> สะสมย้อนไป <b style="color:#ef4444">${fmt(atB.len,1)} กม.</b><br>` +
+      (toA <= 0.2 ? `🚗 ท้ายแถว (ปลายคิว): <b>ยาวถึง A (${esc(j.from.name)}) แล้ว</b> หรือเลยไปอีก`
+                  : `🚗 ท้ายแถว (ปลายคิว) อยู่ที่: ${atB.tailLm ? trLmTxt(atB.tailLm) : `กม. ${fmt(atB.s,1)} จาก A`} — <b>ยังไม่ถึง A อีก ${fmt(toA,1)} กม.</b>`) +
+      `${atB.speed ? `<br>ในคิววิ่งได้ ~${fmt(atB.speed,0)} กม./ชม.` : ""}${atB.delay_min ? ` · เสียเวลาเพิ่ม ~${fmt(atB.delay_min,0)} นาที` : ""}</div>`;
+  } else if(jams.length){
+    qTxt = `<div class="tr-queue">✅ <b>หน้า B (${esc(j.to.name)}) ไม่มีคิวสะสม</b> · แต่มีรถติดระหว่างทาง ${jams.length} ช่วง รวม ${fmt(jamKm,1)} กม. (ดูรายการด้านล่าง)</div>`;
+  } else {
+    qTxt = `<div class="tr-queue">✅ <b>ช่วง A → B รถไม่ติด</b> ใช้เวลา ~${fmt(r.minutes,0)} นาที</div>`;
+  }
+  $("#trInfo").innerHTML = head + qTxt +
+    `<span class="muted">ใช้เวลาทั้งช่วง ${fmt(r.minutes,0)} นาที${r.delay_min ? ` (ช้ากว่าปกติ +${fmt(r.delay_min,0)} นาที)` : ""} · ข้อมูล ${esc(j.at.slice(11,16))} น. · ทิศทางขาไป A → B</span>` +
+    `<br><button type="button" class="tr-rev" id="trRev">⇄ ดูทิศกลับ ${esc(b)} → ${esc(a)}</button>` +
+    (j.warn ? `<br><small style="color:#f97316">⚠ ${esc(j.warn)}</small>` : "") +
+    `<br><small class="muted">ถ้าชื่อ A/B ที่ระบบหาเจอไม่ตรงที่ตั้งใจ ลองพิมพ์ให้ชัดขึ้น เช่น "แยกเกษตร บางเขน" · จุดสังเกตอ้างอิงจากชื่อกล้อง CCTV/เซนเซอร์ กทม. ที่อยู่ใกล้</small>`;
+  $("#trRev").addEventListener("click", ()=>trSearch(`${b} ถึง ${a}`));
+  $("#trList").innerHTML = jams.map((x,k)=>{
+    const c = x.flood ? "#0284c7" : (TR_COLOR[x.magnitude]||"#ef4444");
+    return `<div class="tr-item" data-k="${k}" style="border-left-color:${c}">
+      <div class="h"><span class="pill" style="background:${c};color:${x.magnitude===1&&!x.flood?'#111':'#fff'}">${x.flood ? `🌊 น้ำท่วมขัง${x.flood.depth?` ~${fmt(x.flood.depth,0)} ซม.`:""} + รถติด` : `🚗 รถติด · ${TR_MAG[x.magnitude]||""}`}</span>
+        <span class="big">${fmt(x.len,1)} กม.</span>${x.delay_min?`<span class="big" style="color:${c}">+${fmt(x.delay_min,0)} นาที</span>`:""}
+        ${x.speed?`<span class="tag">วิ่งได้ ~${fmt(x.speed,0)} กม./ชม.</span>`:""}</div>
+      <div class="route">🚗 ท้ายแถว (ปลายคิว): ${x.tailLm ? trLmTxt(x.tailLm) + " · " : ""}กม. ${fmt(x.s,1)} จาก A${!x.tailLm && x.tailTxt?` <span class="muted">(หลัง: ${esc(x.tailTxt)})</span>`:""}<br>
+        🚦 หัวแถว (จุดที่ติด): ${x.headLm ? trLmTxt(x.headLm) + " · " : ""}${totKm - x.e <= 0.3 ? "<b>ที่ B</b>" : `ห่าง B ${fmt(Math.max(0,totKm-x.e),1)} กม.`}</div>
+      ${x.flood?`<div class="muted tr-note">ℹ️ ยืนยันจาก ${esc(x.flood.src)}${x.flood.name?` (${esc(x.flood.name)})`:""} ห่าง ~${fmt(x.flood.d,0)} ม.</div>`:""}
+    </div>`; }).join("") || `<div class="note">ไม่มีช่วงรถติดระหว่าง ${esc(j.from.name)} ถึง ${esc(j.to.name)}</div>`;
+  $("#trList").querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>{
+    const x = jams[Number(el.dataset.k)]; trMiniFocus(x.line, x.flood ? "#0284c7" : (TR_COLOR[x.magnitude]||"#ef4444")) || trFocus(x); }));
+  trMiniShow(ly=>{
+    L.polyline(r.line, {color:"#22c55e", weight:6, opacity:.55}).addTo(ly);
+    jams.forEach(x=>{
+      const c = x.flood ? "#0284c7" : (TR_COLOR[x.magnitude]||"#ef4444");
+      L.polyline(x.line, {color:c, weight:9, opacity:.95}).addTo(ly)
+        .bindPopup(`รถติดสะสม ${fmt(x.len,1)} กม. · กม. ${fmt(x.s,1)}–${fmt(x.e,1)}${x.delay_min?` · +${fmt(x.delay_min,0)} นาที`:""}${x.flood?"<br>🌊 มีน้ำท่วมขังช่วงนี้":""}`);
+      if(x.line.length > 1) L.circleMarker(x.line[0], {radius:6, color:"#fff", weight:2, fillColor:c, fillOpacity:1}).addTo(ly).bindTooltip("🚗 ท้ายแถว (ปลายคิว)");
+    });
+    L.marker([j.from.lat,j.from.lon],{icon:trPin("A ต้นทาง: "+j.from.name,"#2563eb")}).addTo(ly);
+    L.marker([j.to.lat,j.to.lon],{icon:trPin("B ปลายทาง: "+j.to.name,"#ef4444")}).addTo(ly);
+    return L.latLngBounds(r.line);
+  });
+  if(map){
+    layers.tr.clearLayers();
+    L.polyline(r.line, {color:"#22c55e", weight:6, opacity:.6}).addTo(layers.tr);
+    jams.forEach(x=>{
+      const c = x.flood ? "#0284c7" : (TR_COLOR[x.magnitude]||"#ef4444");
+      L.polyline(x.line, {color:c, weight:9, opacity:.95}).addTo(layers.tr)
+        .bindPopup(`รถติดสะสม ${fmt(x.len,1)} กม. · กม. ${fmt(x.s,1)}–${fmt(x.e,1)}${x.delay_min?` · +${fmt(x.delay_min,0)} นาที`:""}${x.flood?"<br>🌊 มีน้ำท่วมขังช่วงนี้":""}`);
+    });
+    L.marker([j.from.lat,j.from.lon],{icon:trPin("A ต้นทาง: "+j.from.name,"#2563eb")}).addTo(layers.tr);
+    L.marker([j.to.lat,j.to.lon],{icon:trPin("B ปลายทาง: "+j.to.name,"#ef4444")}).addTo(layers.tr);
+  }
+  trUsage();
 }
 async function trSearch(q){
   if(!TR_OK){ return; }
   q = (q||"").trim(); if(!q) return;
+  const seg = q.split(TR_SPLIT).map(t=>t.trim()).filter(Boolean);
+  if(seg.length === 2){
+    $("#trQ").value = q; $("#trBtn").disabled = true; $("#trList").innerHTML = "";
+    try{ await trSegment(seg[0], seg[1]); }
+    catch(e){ $("#trInfo").textContent = "⚠ หาช่วงถนนไม่สำเร็จ"; }
+    finally{ $("#trBtn").disabled = false; }
+    return;
+  }
   $("#trQ").value = q; $("#trBtn").disabled = true; $("#trInfo").textContent = "กำลังค้นหา…"; $("#trList").innerHTML = "";
   try{
     const r = await fetch(TR_API.traffic(q)); const j = await r.json();
     if(!j.ok){ $("#trInfo").textContent = "⚠ " + (j.error || "ค้นหาไม่สำเร็จ"); return; }
     trLast = j;
     // แยก "บนถนนที่ค้น" กับ "ถนนใกล้เคียง" ให้ชัด (ของใกล้เคียงพับเก็บไว้)
+    const spots = trFloodSpots();
+    j.items.forEach(it=>{ it.k = trClassify(it, spots); });
     const mine = j.items.filter(i=>i.on_road), near = j.items.filter(i=>!i.on_road);
-    const jams = mine.filter(i=>i.cat===6), others = mine.filter(i=>i.cat!==6);
+    const jams = mine.filter(i=>i.k.kind==="jam"), floods = mine.filter(i=>i.k.kind==="flood"), others = mine.filter(i=>i.k.kind!=="jam" && i.k.kind!=="flood");
     const km = jams.reduce((a,i)=>a+(i.length_km||0),0);
     const parts = [];
+    if(floods.length) parts.push(`<b style="color:#0284c7">🌊 น้ำท่วมขัง ${floods.length} จุด</b>`);
     if(jams.length) parts.push(`<b style="color:#ef4444">รถติด ${jams.length} ช่วง รวม ${fmt(km,1)} กม.</b>`);
-    if(others.length) parts.push(`<b style="color:#f97316">${others.map(i=>i.category).filter((v,k,a)=>a.indexOf(v)===k).map(esc).join(" / ")} ${others.length} จุด</b>`);
+    if(others.length) parts.push(`<b style="color:#f97316">${others.map(i=>i.k.label).filter((v,k,a)=>a.indexOf(v)===k).map(esc).join(" / ")} ${others.length} จุด</b>`);
     $("#trInfo").innerHTML = `<b>${esc(j.road.name)}</b> ${esc(j.road.area)} · บนถนนนี้: ` +
       (parts.length ? parts.join(" · ") : "ไม่มีรถติดหรือเหตุขัดข้องขณะนี้ 👍") +
-      ` <span class="muted">(ข้อมูล ${esc(j.at.slice(11,16))} น.${j.cached ? " · ผลล่าสุดใน 5 นาที" : ""})</span>`;
+      ` <span class="muted">(ข้อมูล ${esc(j.at.slice(11,16))} น.${j.cached ? " · ผลล่าสุดใน 5 นาที" : ""})</span>` +
+      `<br><small class="muted">ป้ายปรับจาก TomTom โดยเทียบข้อมูลน้ำท่วม กทม./Floodboard/Traffy ในรัศมี ${TR_NEAR_M} ม. — "ปิดถนน" จะแสดงเฉพาะเมื่อมีสาเหตุระบุ</small>`;
     const idx = it=>j.items.indexOf(it);
     $("#trList").innerHTML = (mine.length ? mine.map(it=>trCard(it, idx(it))).join("") : `<div class="note">ไม่มีเหตุบนถนน${esc(j.road.name)}ขณะนี้</div>`)
       + (near.length ? `<details class="tr-near"><summary>ถนนใกล้เคียง ${near.length} เหตุการณ์ (กดเพื่อดู)</summary>${near.map(it=>trCard(it, idx(it))).join("")}</details>` : "");
-    $("#trList").querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>trFocus(j.items[Number(el.dataset.i)])));
+    $("#trList").querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>{
+      const it = j.items[Number(el.dataset.i)]; trMiniFocus(it.line, it.k.color) || trFocus(it); }));
+    trMiniShow(ly=>{
+      j.items.forEach(it=>L.polyline(it.line, {color:it.k.color, weight: it.on_road ? 8 : 4, opacity: it.on_road ? .95 : .35, dashArray: it.on_road ? null : "6 6"})
+        .addTo(ly).bindPopup(trCard(it, 0).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280}));
+      const bb = (j.road && j.road.bbox) || j.bbox;   // [minLon,minLat,maxLon,maxLat] (Worker มีแค่ j.bbox)
+      const own = mine.flatMap(i=>i.line);
+      return own.length ? L.latLngBounds(own) : (bb && bb.length === 4 ? L.latLngBounds([[bb[1],bb[0]],[bb[3],bb[2]]]) : null);
+    });
     if(map) trDraw(j);
     trUsage();
   }catch(e){ $("#trInfo").textContent = "⚠ ค้นหาไม่สำเร็จ"; }

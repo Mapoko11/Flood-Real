@@ -184,13 +184,14 @@
     <div id="rtList" class="tr-list"></div>
     <h3 class="tr-h">🚗 ค้นหารถติดตามชื่อถนน</h3>
     <form class="tr-search" id="trForm" autocomplete="off">
-      <input type="search" id="trQ" placeholder="พิมพ์ชื่อถนน เช่น วิภาวดีรังสิต, พระราม 2, บางนา-ตราด" maxlength="80" required>
+      <input type="search" id="trQ" placeholder="ชื่อถนน เช่น วิภาวดีรังสิต หรือช่วงถนน เช่น แยกเกษตร ถึง แยกเสนานิคม" maxlength="120" required>
       <button class="btn" type="submit" id="trBtn">ค้นหารถติด</button>
     </form>
     <div class="tr-quick" id="trQuick"></div>
     <div id="trInfo" class="muted"></div>
+    <div id="trMap" class="tr-map" style="display:none"></div>
     <div id="trList" class="tr-list"></div>
-    <div class="muted tr-foot">ข้อมูลจราจร: TomTom · ท้ายแถว = จุดเริ่มรถติด (ที่รถเข้าไปต่อแถว) · หัวแถว = จุดที่ติด/คอขวด
+    <div class="muted tr-foot">ข้อมูลจราจร: TomTom · 🚦 หัวแถว = จุดที่ติด (ต้นเหตุ เช่น ไฟแดง คอขวด น้ำท่วม) · 🚗 ท้ายแถว = ปลายคิว (จุดที่รถมาใหม่ต้องเข้าไปต่อ) · ความยาวคิว = ระยะจากหัวแถวย้อนไปถึงท้ายแถว
       <span id="trUsage"></span></div>
   </section>
 
