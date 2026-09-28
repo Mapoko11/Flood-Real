@@ -34,7 +34,7 @@
   <button data-tab="rain">ฝน 24 ชม.</button>
   <button data-tab="dam">เขื่อน</button>
   <button data-tab="sat">น้ำท่วม (ดาวเทียม)</button>
-  <button data-tab="bma">🚗 น้ำท่วม กทม.</button>
+  <button data-tab="bma">🚗 น้ำท่วม กทม./นนท์</button>
   <button data-tab="cam">📷 กล้อง CCTV</button>
   <button data-tab="traffy">แจ้งปัญหา (Traffy)</button>
   <button data-tab="traffic">🚗 รถติด</button>
@@ -123,6 +123,8 @@
       <span id="bmaInfo" class="muted"></span>
     </div>
     <div class="table-wrap"><table id="bmaTable"></table></div>
+    <h3 class="tr-h">🏘️ นนทบุรี</h3>
+    <div id="nbBox"></div>
     <h3 class="tr-h">🏙️ ระดับน้ำในคลอง กทม. (เฉพาะสถานีที่ถึงเกณฑ์)</h3>
     <div class="filters"><span id="canalInfo" class="muted"></span></div>
     <div class="table-wrap"><table id="canalTable"></table></div>
@@ -134,7 +136,7 @@
       <input type="search" id="camQ" placeholder="ค้นกล้อง เช่น พระราม 4, สาทร, วิภาวดี, บางนา, ชลบุรี" maxlength="60">
     </form>
     <div class="filters">
-      <label><input type="checkbox" id="camBkk" checked> เฉพาะกรุงเทพฯ</label>
+      <select id="camProv"><option value="กรุงเทพมหานคร">กรุงเทพฯ</option><option value="นนทบุรี">นนทบุรี</option><option value="">ทุกจังหวัด</option></select>
       <label><input type="checkbox" id="camLive"> เฉพาะที่มีวิดีโอสด</label>
       <span id="camInfo" class="muted"></span>
     </div>

@@ -79,7 +79,7 @@ function renderAll(){
   if(!DATA) return;
   try{ prepSat(); }catch(e){ console.error(e); }
   $("#updated").textContent = DATA.updated_at ? "อัปเดต " + DATA.updated_at.replace("T"," ") : "ยังไม่มีข้อมูล (รอรอบแรก)";
-  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderSat, renderTraffy, renderBma, renderCanal, renderCam, renderFc]){
+  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderSat, renderTraffy, renderBma, renderCanal, renderNb, renderCam, renderFc]){
     try{ f(); }catch(e){ console.error(f.name, e); }   // ส่วนไหนพัง ส่วนอื่นยังแสดง
   }
 }
@@ -284,15 +284,34 @@ async function camPlay(c, view){
   }catch(e){ fail(); }
 }
 
+/* ---------------- นนทบุรี: รวมข้อมูลที่มีอยู่แล้ว (ThaiWater / Traffy / คลอง กทม. / กล้อง iTIC) ---------------- */
+function renderNb(){
+  const box = $("#nbBox"); if(!box) return;
+  const nb = s=>/นนทบุรี/.test(s||"");
+  const wl = (DATA.waterlevel||[]).filter(w=>nb(w.province)).sort((a,b)=>(b.bank_pct||0)-(a.bank_pct||0));
+  const rain = (DATA.rain||[]).filter(r=>nb(r.province)).sort((a,b)=>(b.rain||0)-(a.rain||0));
+  const tf = ((DATA.traffy||{}).items||[]).filter(t=>nb(t.province) && tfOpen(t));
+  const cams = ((DATA.cctv||{}).cams||[]).filter(c=>nb(c.name));
+  box.innerHTML = `<div class="nb-grid">
+    <div><b>ระดับน้ำ (ThaiWater)</b>${wl.length ? wl.map(w=>`<div>${esc(w.name)} <small class="muted">${esc(w.amphoe)}</small> — <b>${fmt(w.bank_pct,0)}%</b> ตลิ่ง ${pill(WL,w.level)}</div>`).join("") : `<div class="muted">ไม่มีสถานี</div>`}</div>
+    <div><b>ฝน 24 ชม.</b>${rain.length ? rain.map(r=>`<div>${esc(r.name)} <small class="muted">${esc(r.amphoe)}</small> — <b>${fmt(r.rain)}</b> มม.</div>`).join("") : `<div class="muted">ไม่มีสถานี</div>`}</div>
+    <div><b>แจ้งปัญหาค้าง (Traffy)</b><div>${tf.length} เรื่อง</div>
+      <b>กล้อง CCTV</b><div>${cams.length} ตัว <button class="btn btn-ghost" id="nbCams">📷 ดูกล้องนนทบุรี</button></div></div>
+  </div>
+  <small class="muted">นนทบุรียังไม่มีสถานีวัดน้ำท่วมบนถนนแบบ กทม. ที่เปิดให้ดึงข้อมูล · ดูเพิ่มที่ <a href="https://nonthaburi.thaiwater.net/" target="_blank" rel="noopener">ศูนย์ข้อมูลน้ำจังหวัดนนทบุรี</a></small>`;
+  const b = $("#nbCams"); if(b) b.addEventListener("click", ()=>{ $("#camProv").value="นนทบุรี"; renderCam.last=""; document.querySelector('#tabs button[data-tab=cam]').click(); renderCam(); });
+}
+
 function renderCam(){
   const all = (DATA.cctv||{}).cams || [];
   const grid = $("#camGrid"); if(!grid) return;
   if(!all.length){ $("#camInfo").textContent = "ยังไม่มีรายชื่อกล้อง"; grid.innerHTML=""; return; }
   const q = $("#camQ").value.trim().toLowerCase().replace(/\s+/g,"");
-  const list = all.filter(c=> (!$("#camBkk").checked || c.bkk) && (!$("#camLive").checked || c.hls) &&
+  const prov = $("#camProv").value;
+  const list = all.filter(c=> (!prov || String(c.name).includes(prov)) && (!$("#camLive").checked || c.hls) &&
       (!q || String(c.name+c.org).toLowerCase().replace(/\s+/g,"").includes(q)));
   const show = list.slice(0, 24);
-  const key = show.map(c=>c.id).join(",") + "|" + ((DATA.cctv||{}).at||"");
+  const key = prov + "|" + show.map(c=>c.id).join(",") + "|" + ((DATA.cctv||{}).at||"");
   if(key === renderCam.last) return;   // ข้อมูลรีเฟรชทุกนาที: ถ้ารายการเดิม ไม่วาดใหม่ (ภาพ/วิดีโอที่เปิดอยู่ไม่หาย)
   renderCam.last = key; camStop();
   $("#camInfo").textContent = `พบ ${list.length} กล้อง` + (list.length>show.length ? ` (แสดง ${show.length} ตัวแรก พิมพ์ค้นให้แคบลง)` : "");
@@ -834,7 +853,7 @@ $("#lySat").addEventListener("change", ()=>{ if(map) loadSat(); });
 $("#tfState").addEventListener("change", renderTraffy);
 $("#bmaShow").addEventListener("change", renderBma);
 let camT=null; $("#camQ").addEventListener("input", ()=>{ clearTimeout(camT); camT=setTimeout(renderCam, 350); });
-$("#camBkk").addEventListener("change", renderCam); $("#camLive").addEventListener("change", renderCam);
+$("#camProv").addEventListener("change", renderCam); $("#camLive").addEventListener("change", renderCam);
 $("#onlyRisk").addEventListener("change", renderMap);
 if(STATIC){ $("#btnRefresh").style.display="none"; }
 $("#btnRefresh").addEventListener("click", async ()=>{
