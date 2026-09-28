@@ -43,6 +43,12 @@ def seed_from_live_site() -> None:
                     json.dump(fc, f, ensure_ascii=False, separators=(",", ":"))
         seed = {"gistda": {"configured": True, "periods": periods}, "tmd": prev.get("tmd") or {},
                 "bma": prev.get("bma") or {}, "bma_canal": prev.get("bma_canal") or {}}
+        # แหล่งอื่นเก็บข้อมูลรอบก่อนไว้ด้วย: ถ้ารอบนี้ดึงไม่ได้ (เช่น ThaiWater ตอบช้าชั่วคราว)
+        # จะใช้ข้อมูลเดิมแทน เว็บไม่ล้ม (หน้าเว็บจะขึ้นสถานะว่าแหล่งนั้นดึงไม่ได้)
+        for k in ("waterlevel", "rain", "main", "traffy"):
+            if prev.get(k):
+                seed[k] = prev[k]
+        seed["status"] = prev.get("status") or {}
         sources.save_cache(seed)
         print("  seed      ใช้ข้อมูล GISTDA/กรมอุตุฯ/กทม. รอบก่อนจากเว็บที่ออนไลน์")
     except Exception as e:  # noqa: BLE001
@@ -87,8 +93,8 @@ def main() -> int:
 
     ok = sum(1 for v in st.values() if v.get("ok"))
     print(f"site/ พร้อม ({ok}/{len(st)} แหล่งดึงได้)")
-    # ล้มเฉพาะเมื่อแหล่งหลัก (ระดับน้ำ) ใช้ไม่ได้ -> ไม่ deploy เว็บว่างทับของเดิม
-    return 0 if (st.get("waterlevel") or {}).get("ok") else 1
+    # ล้มเฉพาะเมื่อไม่มีข้อมูลระดับน้ำเลย (ทั้งรอบนี้และรอบก่อน) -> ไม่ deploy เว็บว่างทับของเดิม
+    return 0 if data.get("waterlevel") else 1
 
 
 if __name__ == "__main__":
