@@ -659,8 +659,25 @@ $("#fcRdOpen").addEventListener("click", ()=>{
   document.querySelector('#tabs button[data-tab=map]').click();
   const cb=$("#lyRadar"); if(!cb.checked){ cb.checked=true; cb.dispatchEvent(new Event("change")); }
 });
+/* ---------------- Windy (หน้าต่างฝังแบบทางการ ฟรี) — โหลดเมื่อเปิดแท็บพยากรณ์ครั้งแรกเท่านั้น ---------------- */
+let windyOv = "radar";
+function windyLoad(){
+  const box = $("#windyBox"); if(!box) return;
+  const prod = (windyOv==="radar") ? "radar" : "ecmwf";
+  const url = "https://embed.windy.com/embed2.html?lat=13.75&lon=100.55&detailLat=13.75&detailLon=100.55&zoom=7&level=surface"
+    + `&overlay=${windyOv}&product=${prod}&menu=&message=true&marker=&calendar=now&pressure=&type=map&location=coordinates&detail=`
+    + "&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1";
+  box.innerHTML = `<iframe title="Windy" src="${url}" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+}
+document.querySelectorAll("#wdSeg button").forEach(b=>b.addEventListener("click",()=>{
+  windyOv = b.dataset.ov;
+  document.querySelectorAll("#wdSeg button").forEach(x=>x.classList.toggle("active", x===b));
+  windyLoad();
+}));
+
 document.querySelectorAll("#tabs button").forEach(b=>b.addEventListener("click",()=>{
   if(b.dataset.tab==="fc") fcRadarInit(); else fcRadarRun();   // ออกจากแท็บ -> หยุดวน ประหยัดเครื่อง
+  if(b.dataset.tab==="fc" && !windyLoad.done){ windyLoad.done = true; windyLoad(); }   // Windy โหลดครั้งแรกที่เปิดแท็บ
 }));
 
 /* ---------------- รถติด (TomTom) — ใช้ได้เฉพาะเว็บที่มี server (key อยู่ฝั่ง server) ---------------- */
