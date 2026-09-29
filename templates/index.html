@@ -34,6 +34,7 @@
   <button data-tab="wl">ระดับน้ำ</button>
   <button data-tab="rain">ฝน 24 ชม.</button>
   <button data-tab="dam">เขื่อน</button>
+  <button data-tab="river">🌊 สายน้ำ</button>
   <button data-tab="sat">น้ำท่วม (ดาวเทียม)</button>
   <button data-tab="bma">🚗 น้ำท่วม กทม./นนท์</button>
   <button data-tab="cam">📷 กล้อง CCTV</button>
@@ -48,6 +49,7 @@
       <label><input type="checkbox" id="lyWl"> ระดับน้ำ</label>
       <label><input type="checkbox" id="lyRain"> ฝน</label>
       <label><input type="checkbox" id="lyDam"> เขื่อน</label>
+      <label><input type="checkbox" id="lyRiver"> 🌊 สายน้ำเจ้าพระยา</label>
       <label><input type="checkbox" id="lySat"> พื้นที่น้ำท่วม (GISTDA)</label>
       <div class="seg" data-seg="sat">
         <button data-p="1day" class="active">ล่าสุด</button><button data-p="3days">3 วัน</button><button data-p="7days">7 วัน</button><button data-p="30days">30 วัน</button>
@@ -105,6 +107,10 @@
 
   <section class="panel" id="tab-dam">
     <div id="damBars" class="dam-bars"></div>
+  </section>
+
+  <section class="panel" id="tab-river">
+    <div id="rvBody"><div class="note">กำลังรอข้อมูล…</div></div>
   </section>
 
   <section class="panel" id="tab-sat">
@@ -229,5 +235,6 @@
 
 <script src="{{ url_for('static', filename='leaflet/leaflet.js') }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
+<script src="{{ url_for('static', filename='river.js') }}?v={{ version }}"></script>
 </body>
 </html>

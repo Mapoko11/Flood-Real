@@ -239,3 +239,54 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .tr-cams-h{font-weight:700;margin:6px 0}
 .cam-sub{font-size:12.5px;margin:0 0 6px}
 .cam-tag{background:#ef444422;color:#ef4444;border-radius:999px;padding:1px 8px;margin-left:4px;white-space:nowrap}
+
+/* ---- 🌊 สายน้ำเจ้าพระยา (river.js) ---- */
+.rv-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:6px}
+.rv-sum>div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;line-height:1.6}
+.rv-sum select{min-width:0;width:100%;margin-top:4px}
+.rv-h3{margin:16px 0 8px;font-size:15px;color:var(--muted);font-weight:600}
+.rv-dams{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+.rv-dam{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px}
+.rv-dam .t{display:flex;justify-content:space-between;gap:8px}
+.rv-dam .sub{font-size:12.5px;color:var(--muted);margin-top:4px}
+.rv-flow{display:flex;flex-direction:column}
+.rv-row{display:flex;gap:12px;min-width:0}
+.rv-rail{width:18px;flex:none;position:relative;display:flex;justify-content:center}
+.rv-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--bg);margin-top:6px;position:relative;z-index:1;flex:none}
+.rv-seg{position:absolute;top:20px;bottom:-6px;width:6px;border-radius:3px;left:50%;margin-left:-3px;opacity:.85}
+.rv-main{flex:1;min-width:0;padding-bottom:14px}
+.rv-h{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
+.rv-flag{font-size:12px;color:#fca5a5;border:1px solid #7f1d1d;border-radius:6px;padding:0 6px}
+.rv-row.top .rv-main{background:var(--panel2);border-radius:10px;padding:4px 10px 12px;margin-bottom:6px}
+.rv-bar{position:relative;height:8px;background:var(--panel2);border-radius:4px;margin:6px 0;overflow:hidden}
+.rv-bar i{position:absolute;left:0;top:0;bottom:0;border-radius:4px}
+.rv-bar u{position:absolute;top:0;bottom:0;width:2px;background:#f1f5fb;opacity:.7}
+.rv-s{font-size:12.5px;line-height:1.6}
+
+.rv-svgbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;max-width:520px;margin:0 auto}
+.rv-svg{display:block;width:100%;height:auto}
+.rv-svg .rv-t{fill:var(--text);font-size:13px;font-weight:600}
+.rv-svg .rv-m{fill:var(--muted);font-size:11px}
+
+/* ---- แอนิเมชันสายน้ำ ---- */
+@keyframes rvmv{0%{transform:translateY(calc(var(--d,26px) * -.5));opacity:0}18%{opacity:1}82%{opacity:1}100%{transform:translateY(calc(var(--d,26px) * .5));opacity:0}}
+@keyframes rvpulse{0%{transform:scale(1);opacity:.55}100%{transform:scale(3);opacity:0}}
+@keyframes rvblink{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes rvmarch{to{stroke-dashoffset:-28}}
+@keyframes rvmmv{0%{transform:translateY(9px);opacity:0}20%{opacity:1}80%{opacity:1}100%{transform:translateY(-9px);opacity:0}}
+.rv-svg .rv-mv{animation:rvmv 1.8s linear infinite}
+.rv-svg .rv-pulse{transform-box:fill-box;transform-origin:center;animation:rvpulse 2s ease-out infinite}
+.rv-svg .rv-blink,.rv-dot.rv-blink{animation:rvblink 2s ease-in-out infinite}
+.rv-dot.calm{animation-duration:2.6s}
+.rv-svg .rv-march{animation:rvmarch 1.2s linear infinite}
+.rv-svg .rv-c{font-size:10.5px;font-weight:600}
+.rv-svgbox{background:radial-gradient(120% 60% at 50% 0%,#12305a 0%,var(--panel) 60%);box-shadow:0 6px 24px #0006}
+.rv-lg{display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:center;font-size:12.5px;padding:6px 4px 2px}
+.rv-lg i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.rv-mmv{font-size:15px;line-height:18px;text-align:center;width:18px;height:18px;animation:rvmmv 1.6s linear infinite}
+.rv-pd{position:relative;display:block;width:26px;height:26px}
+.rv-pd i{position:absolute;inset:7px;border-radius:50%;background:var(--c);border:2px solid #fff;box-shadow:0 0 6px var(--c)}
+.rv-pd b{position:absolute;inset:6px;border-radius:50%;background:var(--c);opacity:0}
+.rv-pd.on i{animation:rvblink var(--t) ease-in-out infinite}
+.rv-pd.on b{animation:rvpulse var(--t) ease-out infinite}
+@media (prefers-reduced-motion:reduce){.rv-svg *,.rv-dot,.rv-pd *,.rv-mmv{animation:none!important}}

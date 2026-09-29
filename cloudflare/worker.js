@@ -196,17 +196,26 @@ async function search(env, qRaw) {
   const q = String(qRaw || "").trim();
   if (q.length < 2 || q.length > 80) throw new TrafficError("พิมพ์ชื่อถนน 2–80 ตัวอักษร");
   await spend(env, "traffic");
-  const res = await lookup(env, q);
-  if (!res.length) throw new TrafficError(`ไม่พบถนน/สถานที่ชื่อ “${q}”`);
-  res.sort((a, b) => (a.type === "Street" ? 0 : 1) - (b.type === "Street" ? 0 : 1));
-  const r = res[0], a = r.address || {}, vp = r.viewport || {}, pos = r.position || {};
-  let tl = vp.topLeftPoint, br = vp.btmRightPoint;
-  if (!tl || !br) { tl = { lat: pos.lat + 0.02, lon: pos.lon - 0.02 }; br = { lat: pos.lat - 0.02, lon: pos.lon + 0.02 }; }
-  const road = {
-    name: a.streetName || (r.poi || {}).name || a.freeformAddress || q,
-    area: [a.municipalitySubdivision, a.municipality, a.countrySubdivision].filter(Boolean).join(", "),
-    type: r.type || "", lat: pos.lat, lon: pos.lon,
-  };
+  const [qc, hint] = splitParen(q);
+  const ld = await longdo(env, qc, null, hint);
+  const res = ld.length ? [] : await lookup(env, (qc + " " + hint).trim());
+  if (!res.length && !ld.length) throw new TrafficError(`ไม่พบถนน/สถานที่ชื่อ “${q}”`);
+  let road, tl, br;
+  if (ld.length) {
+    const d = ld[0];
+    road = { name: d.name, area: d.area || "", type: "POI", lat: d.lat, lon: d.lon };
+    tl = { lat: d.lat + 0.011, lon: d.lon - 0.012 }; br = { lat: d.lat - 0.011, lon: d.lon + 0.012 };
+  } else {
+    res.sort((a, b) => (a.type === "Street" ? 0 : 1) - (b.type === "Street" ? 0 : 1));
+    const r = res[0], a = r.address || {}, vp = r.viewport || {}, pos = r.position || {};
+    tl = vp.topLeftPoint; br = vp.btmRightPoint;
+    if (!tl || !br) { tl = { lat: pos.lat + 0.02, lon: pos.lon - 0.02 }; br = { lat: pos.lat - 0.02, lon: pos.lon + 0.02 }; }
+    road = {
+      name: a.streetName || (r.poi || {}).name || a.freeformAddress || q,
+      area: [a.municipalitySubdivision, a.municipality, a.countrySubdivision].filter(Boolean).join(", "),
+      type: r.type || "", lat: pos.lat, lon: pos.lon,
+    };
+  }
   // ขยายขอบเขต 1.5 กม. และไม่เกิน ~50 กม. จากกลาง
   const dlat = 1.5 / 111, dlon = 1.5 / (111 * Math.max(0.2, Math.cos((tl.lat + br.lat) / 2 * Math.PI / 180)));
   let b = [tl.lon - dlon, br.lat - dlat, br.lon + dlon, tl.lat + dlat];
@@ -311,17 +320,55 @@ async function osmJunction(env, qRaw, bias) {
   try { await env.COUNTER.put(kv, JSON.stringify({ hit }), { expirationTtl: (hit ? 30 : 7) * 86400 }); } catch (e) {}
   return hit;
 }
-async function place(env, q, bias) {
-  const ll = parseLatLon(q);
+/* Longdo Map Search (ต้องตั้ง secret LONGDO_API_KEY ใน Worker; ไม่ตั้ง = ข้าม) · cache KV 30 วัน · ล้มเหลวเงียบๆ */
+const PAREN = /^(.*?)\s*[(（]([^)）]*)[)）]\s*$/;
+function splitParen(q) {
+  const m = PAREN.exec(String(q || "").trim().split(/\s+/).join(" "));
+  return m && m[1].trim() ? [m[1].trim(), m[2].trim()] : [String(q || "").trim(), ""];
+}
+async function longdo(env, q, bias, hint) {
+  const k = String(env.LONGDO_API_KEY || "").trim(), name = String(q || "").trim();
+  if (!k || name.length < 3) return [];
+  const kv = "ld:" + normTh(name) + (hint ? "|" + normTh(hint) : "");
+  try { const c = JSON.parse((await env.COUNTER.get(kv)) || "null"); if (c) return c.hit || []; } catch (e) {}
+  const b = bias || BIAS;
+  let data;
+  try {
+    const u = "https://search.longdo.com/mapsearch/json/search?" + new URLSearchParams({ keyword: name, lon: b[1], lat: b[0], span: "40km", limit: "10", key: k, locale: "th" });
+    const r = await fetch(u, { headers: { "User-Agent": "FloodReal/1.0 (+systemL traffic)" }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return [];
+    data = (await r.json()).data || [];
+  } catch (e) { return []; }
+  const nq = normTh(name), nh = normTh(hint);
+  if (nh) data = data.slice().sort((x, y) => (normTh((x.address || "") + (x.name || "")).includes(nh) ? 0 : 1) - (normTh((y.address || "") + (y.name || "")).includes(nh) ? 0 : 1));
+  const out = [];
+  for (const d of data) {
+    if (typeof d.lat !== "number" || typeof d.lon !== "number" || !normTh(d.name).includes(nq)) continue;
+    if (km(b[0], b[1], d.lat, d.lon) > 40) continue;
+    out.push({ name: String(d.name), kind: "Longdo", area: String(d.address || "").slice(0, 60), lat: Math.round(d.lat * 1e6) / 1e6, lon: Math.round(d.lon * 1e6) / 1e6 });
+    if (out.length >= 3) break;
+  }
+  try { await env.COUNTER.put(kv, JSON.stringify({ hit: out }), { expirationTtl: (out.length ? 30 : 3) * 86400 }); } catch (e) {}
+  return out;
+}
+async function place(env, q0, bias) {
+  const ll = parseLatLon(q0);
   if (ll) return { name: ll[2], lat: ll[0], lon: ll[1], alts: [] };
+  const [q, hint] = splitParen(q0);
   const osm = await osmJunction(env, q, bias);
-  const res = rankPlace(await lookup(env, q, bias || BIAS), q, bias);
-  if (!res.length && !osm) throw new TrafficError(`ไม่พบสถานที่ “${q}”`);
+  const res = rankPlace(await lookup(env, (q + " " + hint).trim(), bias || BIAS), q, bias);
+  const ld = await longdo(env, q, bias, hint);
+  if (!res.length && !osm && !ld.length) throw new TrafficError(`ไม่พบสถานที่ “${q0}”`);
   let alts = altsOf(res, q);
+  const far = (x, y) => km(x.lat, x.lon, y.lat, y.lon) >= 0.08;
+  if (ld.length && !osm) {
+    alts = ld.concat(alts.filter(x => ld.every(y => far(x, y)))).slice(0, 5);
+    return { name: q, lat: ld[0].lat, lon: ld[0].lon, kind: "Longdo", alts };
+  }
+  if (ld.length) alts = alts.concat(ld.filter(y => far(y, osm)));
   if (osm) {
-    const nm = String(q).trim();
-    alts = [{ name: nm, kind: "ทางแยก (OSM)", area: "", lat: osm.lat, lon: osm.lon }].concat(alts.filter(x => km(x.lat, x.lon, osm.lat, osm.lon) >= 0.08)).slice(0, 5);
-    return { name: nm, lat: osm.lat, lon: osm.lon, kind: "ทางแยก (OSM)", alts };
+    alts = [{ name: q, kind: "ทางแยก (OSM)", area: "", lat: osm.lat, lon: osm.lon }].concat(alts.filter(x => far(x, osm))).slice(0, 5);
+    return { name: q, lat: osm.lat, lon: osm.lon, kind: "ทางแยก (OSM)", alts };
   }
   const r = res[0], pos = r.position || {};
   return { name: candName(r, q), lat: pos.lat, lon: pos.lon, kind: TYPE_TH[r.type] || "", alts };
