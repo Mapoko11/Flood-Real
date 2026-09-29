@@ -19,6 +19,7 @@ import re
 import xml.etree.ElementTree as ET
 import cam_health
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,12 +38,12 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def _get_json(url: str, headers: dict | None = None):
+def _get_json(url: str, headers: dict | None = None, timeout: float | None = None):
     h = {"User-Agent": UA, "Accept": "application/json"}
     if headers:
         h.update(headers)
     req = urllib.request.Request(url, headers=h)
-    with urllib.request.urlopen(req, timeout=CFG["HTTP_TIMEOUT"]) as r:
+    with urllib.request.urlopen(req, timeout=timeout or CFG["HTTP_TIMEOUT"]) as r:
         raw = r.read()
     return json.loads(raw.decode("utf-8-sig"))
 
@@ -546,8 +547,9 @@ def fetch_tmd() -> dict:
 
 # ---------------------------------------------------------------- Traffy Fondue
 
-TRAFFY_PAGE = 1000
-TRAFFY_MAX_PAGES = 15
+TRAFFY_PAGE = 500          # หน้าละน้อยลง -> แต่ละคำขอเสร็จเร็ว ไม่หมดเวลา
+TRAFFY_MAX_PAGES = 30
+TRAFFY_TIMEOUT = 60        # Traffy ตอบช้าบางช่วง (เคยหมดเวลาที่ 25 วิ)
 _FLOOD_WORDS = ("น้ำท่วม", "น้ำขัง", "ท่วมขัง")
 
 
@@ -578,11 +580,23 @@ def fetch_traffy() -> dict:
         return {"configured": False, "items": []}
     hours = float(CFG.get("TRAFFY_HOURS") or 72)
     cutoff = datetime.now() - timedelta(hours=hours)
-    items, scanned, seen = [], 0, set()
+    items, scanned, seen, partial = [], 0, set(), ""
     for page in range(TRAFFY_MAX_PAGES):
         url = CFG["TRAFFY_URL"] + "?" + urllib.parse.urlencode(
             {"output_format": "json", "limit": TRAFFY_PAGE, "offset": page * TRAFFY_PAGE})
-        js = _get_json(url)
+        js = None
+        for attempt in range(2):                       # ลองซ้ำ 1 ครั้งต่อหน้า
+            try:
+                js = _get_json(url, timeout=TRAFFY_TIMEOUT)
+                break
+            except Exception as e:  # noqa: BLE001
+                err = e
+                time.sleep(3)
+        if js is None:
+            if page == 0:
+                raise err                               # หน้าแรกไม่ได้เลย -> ใช้ข้อมูลรอบก่อน
+            partial = f"ได้ {page} หน้าแรก ({type(err).__name__})"
+            break                                       # ได้บางหน้าแล้ว -> ใช้เท่าที่ได้ ดีกว่าไม่มี
         feats = js.get("features") if isinstance(js, dict) else None
         feats = feats if isinstance(feats, list) else []
         oldest = None
@@ -630,7 +644,7 @@ def fetch_traffy() -> dict:
         if not any(w in it["state"] for w in ("เสร็จสิ้น", "ยกเลิก", "ไม่เกี่ยวข้อง")):
             d["open"] += 1
     return {"configured": True, "hours": hours, "scanned": scanned, "items": items,
-            "by_state": by_state,
+            "by_state": by_state, "partial": partial,
             "by_district": sorted(by_dist.values(), key=lambda r: (-r["open"], -r["count"]))}
 
 
