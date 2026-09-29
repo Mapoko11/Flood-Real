@@ -156,6 +156,9 @@ def _road_at(name, area, typ, lat, lon, src):
 
 def _find_road(q: str, key: str) -> dict:
     q0 = q
+    ll = _parse_latlon(q)            # "lat,lon@ชื่อ" = จุดที่ผู้ใช้ลากหมุด/จำไว้
+    if ll:
+        return _road_at(ll[2], "", "POI", ll[0], ll[1], "จุดที่คุณปักหมุดไว้")
     m = _PAREN.match(" ".join(str(q or "").split()))
     q, hint = (m.group(1).strip(), m.group(2).strip()) if m and m.group(1).strip() else (q, "")
     is_jn = q.strip().startswith("แยก")
@@ -370,13 +373,24 @@ def _osm_cache() -> dict:
         return {}
 
 
+def _is_jn_node(t: dict) -> bool:
+    """จุด OSM นี้เป็น "ทางแยก" จริงไหม (ไม่ใช่ป้ายรถเมล์/สถานีรถไฟฟ้า/ร้านค้าที่ตั้งชื่อตามแยก)"""
+    if any(k in t for k in ("public_transport", "railway", "amenity", "shop", "office", "tourism", "building", "station")):
+        return False
+    return t.get("highway") not in ("bus_stop", "platform")
+
+
+# ชื่อผล Longdo ที่ "ไม่ใช่ตัวแยก" (ป้ายรถ/สถานี/ร้าน) ให้ไปอยู่ท้าย
+_LD_BAD = ("ป้ายรถ", "สถานี", "บริษัท", "ร้าน", "สาขา", "คอนโด", "ตลาด", "โรงแรม", "ธนาคาร", "ปั๊ม", "อาคาร", "ทางออก")
+
+
 def _osm_junction(q: str, bias=None):
     """คืน {"lat","lon","n"} หรือ None — ใช้เฉพาะชื่อที่ขึ้นต้น 'แยก' · เก็บผลลง data/osm_places.json (เจอ 30 วัน/ไม่เจอ 7 วัน)
     ดึงไม่สำเร็จ (เครือข่าย/Overpass ล่ม) -> None เงียบๆ แล้วใช้ TomTom ต่อ (ไม่ cache ความล้มเหลว)"""
     name = " ".join(str(q or "").split())
     if not name.startswith("แยก") or not _OSM_OK.match(name):
         return None
-    key = _norm(name)
+    key = "j2:" + _norm(name)          # j2 = กรองป้ายรถ/สถานีรถไฟฟ้าออกแล้ว (ผลเก่าที่ปนสถานีจะไม่ถูกใช้)
     with _osm_lock:
         c = _osm_cache().get(key)
     if c and time.time() - c.get("t", 0) < (30 if c.get("hit") else 7) * 86400:
@@ -390,6 +404,7 @@ def _osm_junction(q: str, bias=None):
             els = json.loads(r.read().decode("utf-8")).get("elements") or []
     except Exception:  # noqa: BLE001
         return None
+    els = [e for e in els if _is_jn_node(e.get("tags") or {})]      # ตัดป้ายรถ/สถานีรถไฟฟ้า/ร้านที่ชื่อ "แยก…" ออก
     pts = [(e["lat"], e["lon"]) for e in els if isinstance(e.get("lat"), (int, float)) and isinstance(e.get("lon"), (int, float))]
     hit = None
     if pts:
@@ -419,7 +434,7 @@ def _longdo(q: str, bias=None, hint: str = "") -> list:
     if not k or len(name) < 3:
         _LD_STAT["msg"] = "ไม่มี key" if not k else "ชื่อสั้นไป"
         return []
-    ck = "ld:" + _norm(name) + ("|" + _norm(hint) if hint else "")
+    ck = "ld2:" + _norm(name) + ("|" + _norm(hint) if hint else "")
     with _osm_lock:
         c = _osm_cache().get(ck)
     if c and time.time() - c.get("t", 0) < (30 if c.get("hit") else 3) * 86400:
@@ -435,8 +450,9 @@ def _longdo(q: str, bias=None, hint: str = "") -> list:
         _LD_STAT["msg"] = "เรียกไม่สำเร็จ: " + str(e)[:80]
         return []
     nq, nh = _norm(name), _norm(hint)
-    if nh:   # ผลที่ที่อยู่ตรงกับคำในวงเล็บ (เช่น เขต/ย่าน) มาก่อน
-        data = sorted(data, key=lambda d: 0 if nh in _norm(str(d.get("address") or "") + str(d.get("name") or "")) else 1)
+    # ผลที่ที่อยู่ตรงกับคำในวงเล็บ (เช่น เขต/ย่าน) มาก่อน · ผลที่เป็นป้ายรถ/สถานี/ร้าน ไปท้าย
+    data = sorted(data, key=lambda d: (0 if (not nh or nh in _norm(str(d.get("address") or "") + str(d.get("name") or ""))) else 1,
+                                       1 if any(w in str(d.get("name") or "") for w in _LD_BAD) else 0))
     out = []
     for d in data:
         lat, lon, nm = d.get("lat"), d.get("lon"), str(d.get("name") or "")

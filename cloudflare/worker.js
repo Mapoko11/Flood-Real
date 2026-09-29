@@ -313,7 +313,7 @@ const OSM_BBOX = "13.45,100.25,14.15,100.95";
 async function osmJunction(env, qRaw, bias) {
   const name = String(qRaw || "").trim().split(/\s+/).join(" ");
   if (!name.startsWith("แยก") || !/^[฀-๿A-Za-z0-9 .\-]{3,40}$/.test(name)) return null;
-  const kv = "osm:" + normTh(name);
+  const kv = "osm2:" + normTh(name);      // osm2 = กรองป้ายรถ/สถานีออกแล้ว
   try {
     const c = JSON.parse((await env.COUNTER.get(kv)) || "null");
     if (c) return c.hit || null;
@@ -333,7 +333,9 @@ async function osmJunction(env, qRaw, bias) {
     } catch (e) { errs.push(new URL(ep).hostname.split(".").slice(-2, -1)[0] + " " + String((e && e.name) || e)); }
   }
   if (els === null) { DIAG.osm = "Overpass ใช้ไม่ได้ (" + errs.join(", ") + ")"; return null; }
-  const pts = els.filter(e => typeof e.lat === "number" && typeof e.lon === "number").map(e => [e.lat, e.lon]);
+  const isJnNode = t => !["public_transport", "railway", "amenity", "shop", "office", "tourism", "building", "station"].some(k => k in t)
+                        && !["bus_stop", "platform"].includes(t.highway);
+  const pts = els.filter(e => typeof e.lat === "number" && typeof e.lon === "number" && isJnNode(e.tags || {})).map(e => [e.lat, e.lon]);
   let hit = null;
   if (pts.length) {
     const b = bias || BIAS;
@@ -350,10 +352,11 @@ function splitParen(q) {
   const m = PAREN.exec(String(q || "").trim().split(/\s+/).join(" "));
   return m && m[1].trim() ? [m[1].trim(), m[2].trim()] : [String(q || "").trim(), ""];
 }
+const LD_BAD = ["ป้ายรถ", "สถานี", "บริษัท", "ร้าน", "สาขา", "คอนโด", "ตลาด", "โรงแรม", "ธนาคาร", "ปั๊ม", "อาคาร", "ทางออก"];
 async function longdo(env, q, bias, hint) {
   const k = String(env.LONGDO_API_KEY || "").trim(), name = String(q || "").trim();
   if (!k || name.length < 3) { DIAG.ld = k ? "ชื่อสั้นเกินไป" : "ยังไม่ได้ตั้ง Secret LONGDO_API_KEY ใน Worker"; return []; }
-  const kv = "ld:" + normTh(name) + (hint ? "|" + normTh(hint) : "");
+  const kv = "ld2:" + normTh(name) + (hint ? "|" + normTh(hint) : "");
   try { const c = JSON.parse((await env.COUNTER.get(kv)) || "null"); if (c) { if (!(c.hit || []).length) DIAG.ld = "ไม่พบผลลัพธ์ (จากแคช 3 วัน)"; return c.hit || []; } } catch (e) {}
   const b = bias || BIAS;
   let data;
@@ -367,7 +370,9 @@ async function longdo(env, q, bias, hint) {
     data = js.data || [];
   } catch (e) { DIAG.ld = "เชื่อมต่อ Longdo ไม่ได้ (" + String((e && (e.name + ": " + e.message)) || e).slice(0, 80) + ")"; return []; }
   const nq = normTh(name), nh = normTh(hint);
-  if (nh) data = data.slice().sort((x, y) => (normTh((x.address || "") + (x.name || "")).includes(nh) ? 0 : 1) - (normTh((y.address || "") + (y.name || "")).includes(nh) ? 0 : 1));
+  const bad = d => LD_BAD.some(w => String(d.name || "").includes(w)) ? 1 : 0;       // ป้ายรถ/สถานี/ร้าน ไปท้าย
+  const hm = d => (!nh || normTh((d.address || "") + (d.name || "")).includes(nh)) ? 0 : 1;
+  data = data.slice().sort((x, y) => (hm(x) - hm(y)) || (bad(x) - bad(y)));
   const out = [];
   for (const d of data) {
     if (typeof d.lat !== "number" || typeof d.lon !== "number" || !normTh(d.name).includes(nq)) continue;

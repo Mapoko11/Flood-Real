@@ -12,7 +12,7 @@ async function ldPoint(q){
   if(s.length < 3 || s.includes("@") || /^\s*-?\d+(\.\d+)?\s*,/.test(s)) return null;
   const m = s.match(/^(.*?)\s*[(（]([^)）]*)[)）]\s*$/);
   const name = (m && m[1].trim()) || s, hint = m ? m[2].trim() : "";
-  const ck = "ldc1:" + name + "|" + hint;
+  const ck = "ldc2:" + name + "|" + hint;
   try{ const c = JSON.parse(sessionStorage.getItem(ck) || "null"); if(c) return c.hit; }catch(e){}
   const nz = t => String(t||"").replace(/\s+/g,"").toLowerCase();
   let hit = null, ok = false;
@@ -23,7 +23,9 @@ async function ldPoint(q){
     const nq = nz(name), nh = nz(hint);
     let d = (js.data||[]).filter(x => typeof x.lat === "number" && typeof x.lon === "number" && nz(x.name).includes(nq)
                                    && trDistM(13.7563, 100.5018, x.lat, x.lon) <= 40000);
-    if(nh) d.sort((a,b) => (nz((a.address||"")+a.name).includes(nh) ? 0 : 1) - (nz((b.address||"")+b.name).includes(nh) ? 0 : 1));
+    const BAD = ["ป้ายรถ","สถานี","บริษัท","ร้าน","สาขา","คอนโด","ตลาด","โรงแรม","ธนาคาร","ปั๊ม","อาคาร","ทางออก"];
+    const hm = x => (!nh || nz((x.address||"")+x.name).includes(nh)) ? 0 : 1, bad = x => BAD.some(w => String(x.name||"").includes(w)) ? 1 : 0;
+    d.sort((a,b) => (hm(a)-hm(b)) || (bad(a)-bad(b)));        // ป้ายรถ/สถานี/ร้าน ไปท้าย
     if(d[0]) hit = {lat: d[0].lat, lon: d[0].lon, name: String(d[0].name)};
   }catch(e){}
   if(ok){ try{ sessionStorage.setItem(ck, JSON.stringify({hit})); }catch(e){} }
@@ -1234,8 +1236,10 @@ async function trSearch(q){
   }
   $("#trQ").value = q; $("#trBtn").disabled = true; $("#trInfo").textContent = "กำลังค้นหา…"; $("#trList").innerHTML = "";
   try{
-    const r = await fetch(TR_API.traffic(await ldUse(q))); const j = await r.json();
+    const memS = trMemGet()[trMemKey(q)];                 // 📌 จุดที่เคยลากหมุดแก้ไว้ -> ใช้ก่อนเสมอ
+    const r = await fetch(TR_API.traffic(memS ? trPtStr(memS, q) : await ldUse(q))); const j = await r.json();
     if(!j.ok){ $("#trInfo").textContent = "⚠ " + (j.error || "ค้นหาไม่สำเร็จ"); return; }
+    if(memS && j.road){ j.road.name = q; j.road.area = "📌 ตำแหน่งจากหมุดที่คุณปักไว้"; }
     trLast = j;
     // แยก "บนถนนที่ค้น" กับ "ถนนใกล้เคียง" ให้ชัด (ของใกล้เคียงพับเก็บไว้)
     const spots = trFloodSpots();
@@ -1265,9 +1269,16 @@ async function trSearch(q){
       const own = mine.flatMap(i=>i.line);
       // 📍 หมุดตำแหน่งที่ค้นเจอ (Longdo/OSM/TomTom) — กดดูที่มา + เปิดใน Google Maps
       const rp = (j.road && typeof j.road.lat === "number" && typeof j.road.lon === "number") ? [j.road.lat, j.road.lon] : null;
-      if(rp) L.marker(rp, {icon: trPin("📍 " + j.road.name, "#8b5cf6"), zIndexOffset: 1000}).addTo(ly)
-        .bindPopup(`<b>${esc(j.road.name)}</b><br>${esc(j.road.area || "")}<br><small class="muted">${rp[0].toFixed(5)}, ${rp[1].toFixed(5)}</small>`
-          + `<br><a href="https://www.google.com/maps?q=${rp[0]},${rp[1]}" target="_blank" rel="noopener">เปิดใน Google Maps</a>`);
+      if(rp){
+        const pm = L.marker(rp, {icon: trPin((memS ? "📌 " : "📍 ") + j.road.name, memS ? "#0ea5e9" : "#8b5cf6"), zIndexOffset: 1000, draggable: true}).addTo(ly)
+          .bindPopup(`<b>${esc(j.road.name)}</b><br>${memS ? "📌 ใช้จุดที่คุณปักหมุดไว้" : esc(j.road.area || "")}<br><small class="muted">${rp[0].toFixed(5)}, ${rp[1].toFixed(5)}</small>`
+            + `<br>✋ <b>ลากหมุดไปวางตรงแยกจริง</b> ระบบจะจำไว้ใช้ครั้งต่อไป`
+            + (memS ? `<br><a href="#" class="tr-forget">ลบจุดที่จำไว้ (กลับไปค้นอัตโนมัติ)</a>` : "")
+            + `<br><a href="https://www.google.com/maps?q=${rp[0]},${rp[1]}" target="_blank" rel="noopener">เปิดใน Google Maps</a>`);
+        pm.on("dragend", ()=>{ const p = pm.getLatLng(); trMemSet(trMemKey(q), {lat:p.lat, lon:p.lng, name:q}); trSearch(q); });
+        pm.on("popupopen", e=>{ const a = e.popup.getElement().querySelector(".tr-forget");
+          if(a) a.addEventListener("click", ev=>{ ev.preventDefault(); trMemSet(trMemKey(q), null); trSearch(q); }); });
+      }
       const bnd = own.length ? L.latLngBounds(own) : (bb && bb.length === 4 ? L.latLngBounds([[bb[1],bb[0]],[bb[3],bb[2]]]) : null);
       if(bnd && rp) bnd.extend(rp);
       return bnd || (rp ? L.latLngBounds([rp, rp]).pad(0.01) : null);
