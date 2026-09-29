@@ -926,7 +926,25 @@ function trMiniShow(draw){
   el.style.display = "block";
   if(!trMini){
     trMini = L.map("trMap", {zoomControl:true, preferCanvas:true}).setView([13.76,100.55], 12);
-    L.tileLayer(ESRI+"World_Street_Map/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, attribution:ATTR + " | จราจร: TomTom"}).addTo(trMini);
+    // แผนที่พื้น: ถนน / ดาวเทียม (ปุ่มมุมขวาบน · จำค่าที่เลือกไว้ในเบราว์เซอร์)
+    const mkBase = k => k === "sat"
+      ? [L.tileLayer(ESRI+"World_Imagery/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, attribution:ATTR + " | จราจร: TomTom"}),
+         L.tileLayer(ESRI+"Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, opacity:.8}),
+         L.tileLayer(ESRI+"Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {maxZoom:18})]
+      : [L.tileLayer(ESRI+"World_Street_Map/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, attribution:ATTR + " | จราจร: TomTom"})];
+    let trBase = "street", trBaseLy = [];
+    try{ if(localStorage.getItem("tr_base") === "sat") trBase = "sat"; }catch(e){}
+    const setBase = k => { trBaseLy.forEach(l=>trMini.removeLayer(l)); trBaseLy = mkBase(k); trBaseLy.forEach(l=>{ l.addTo(trMini); l.bringToBack(); }); trBase = k;
+      try{ localStorage.setItem("tr_base", k); }catch(e){}
+      const bt = document.getElementById("trBaseBtn"); if(bt) bt.textContent = k === "sat" ? "🗺 แผนที่ถนน" : "🛰 ดาวเทียม"; };
+    const BaseCtl = L.Control.extend({ options:{position:"topright"}, onAdd(){
+      const d = L.DomUtil.create("div", "leaflet-bar");
+      d.innerHTML = `<a href="#" id="trBaseBtn" role="button" style="width:auto;padding:0 8px;font-size:13px;white-space:nowrap;background:#fff;color:#111">🛰 ดาวเทียม</a>`;
+      L.DomEvent.disableClickPropagation(d);
+      d.firstChild.addEventListener("click", e=>{ e.preventDefault(); setBase(trBase === "sat" ? "street" : "sat"); });
+      return d; } });
+    new BaseCtl().addTo(trMini);
+    setBase(trBase);
     L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.95, zIndex:300}).addTo(trMini);
     trMiniLy = L.layerGroup().addTo(trMini);
   }
