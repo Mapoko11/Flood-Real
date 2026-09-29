@@ -502,11 +502,11 @@ async function tile(env, ctx, z, x, y, cors) {
   if (!(z >= 5 && z <= 18 && x >= 0 && y >= 0 && x < 2 ** z && y < 2 ** z)) return new Response(null, { status: 204, headers: cors });
   const key = new Request(`https://cache.floodreal/tile/${z}/${x}/${y}`);
   const hit = await caches.default.match(key);
-  if (hit) return new Response(hit.body, { headers: { ...cors, "Content-Type": "image/png", "Cache-Control": "public, max-age=120" } });
-  const r = await tt(env, `https://api.tomtom.com/traffic/map/4/tile/flow/relative0/${z}/${x}/${y}.png?thickness=8&tileSize=256`);
+  if (hit) return new Response(hit.body, { headers: { ...cors, "Content-Type": "image/png", "Cache-Control": "public, max-age=180" } });
+  const r = await tt(env, `https://api.tomtom.com/traffic/map/4/tile/flow/relative0/${z}/${x}/${y}.png?${z <= 12 ? 'thickness=8&' : ''}tileSize=256`);
   const buf = await r.arrayBuffer();
-  ctx.waitUntil(caches.default.put(key, new Response(buf, { headers: { "Content-Type": "image/png", "Cache-Control": "max-age=120" } })));
-  return new Response(buf, { headers: { ...cors, "Content-Type": "image/png", "Cache-Control": "public, max-age=120" } });
+  if (r.ok) ctx.waitUntil(caches.default.put(key, new Response(buf, { headers: { "Content-Type": "image/png", "Cache-Control": "max-age=180" } })));
+  return new Response(buf, { headers: { ...cors, "Content-Type": "image/png", "Cache-Control": "public, max-age=180" } });
 }
 
 /* ---------------- สั่ง GitHub สร้างเว็บใหม่ (ใช้กับ Cron Trigger) ---------------- */

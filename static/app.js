@@ -977,7 +977,7 @@ function trMiniShow(draw){
     setBase(trBase);
     trMini.on("click", e=>setTimeout(()=>{        // ถ้าคลิกโดนเส้นรถติด/หมุด (มีป๊อปอัปของมันเปิดอยู่) ไม่ต้องทำ
       const p = trMini._popup; if(p && trMini.hasLayer(p) && p._source) return; trPickHere(e.latlng); }, 0));      // คลิกบนแผนที่ -> บอกพิกัด/แยกใกล้สุด + ปักหมุดบันทึกได้
-    L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.95, zIndex:300, updateWhenZooming:false, keepBuffer:4}).addTo(trMini);   // ซูมแล้วค่อยโหลด (ไม่โหลดภาพระหว่างเลื่อนซูม) เก็บภาพรอบๆ ไว้
+    L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.95, zIndex:300, updateWhenZooming:false, keepBuffer:(innerWidth<700?1:4)}).addTo(trMini);   // ซูมแล้วค่อยโหลด (ไม่โหลดภาพระหว่างเลื่อนซูม) เก็บภาพรอบๆ ไว้
     trMiniLy = L.layerGroup().addTo(trMini);
   }
   trMiniLy.clearLayers();
@@ -1457,7 +1457,7 @@ else if(STATIC){
 $("#lyFlow").addEventListener("change", e=>{
   if(!map) return;
   if(e.target.checked){
-    flowLayer = flowLayer || L.tileLayer(TR_API.tile, {maxZoom:18, minZoom:5, zIndex:350, opacity:.9, updateWhenZooming:false, keepBuffer:4,
+    flowLayer = flowLayer || L.tileLayer(TR_API.tile, {maxZoom:18, minZoom:5, zIndex:350, opacity:.9, updateWhenZooming:false, keepBuffer:(innerWidth<700?1:4),
       attribution:"Traffic &copy; TomTom"});
     flowLayer.addTo(map);
   }else if(flowLayer){ map.removeLayer(flowLayer); }
