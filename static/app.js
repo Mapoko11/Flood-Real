@@ -1554,10 +1554,9 @@ async function gzIncidents(prov, name, g, a){
   const head = `<b>${esc(a.unit)}${esc(name)}</b> (${esc(prov==="กรุงเทพมหานคร"?"กรุงเทพฯ":prov)})`;
   const legend = ` · สีเส้นพื้นหลัง: <b style="color:#ef4444">แดง</b>=ติดหนัก <b style="color:#f59e0b">ส้ม/เหลือง</b>=ปานกลาง <b style="color:#22c55e">เขียว</b>=คล่อง`;
   if(list) list.innerHTML = "";
-  if(STATIC){ if(info) info.innerHTML = `<div class="note">🗺️ ${head}${legend}<br><small class="muted">รายละเอียดเหตุการณ์ (ติดอะไร กี่ กม.) ดูได้เฉพาะเว็บในเครื่อง</small></div>`; return; }
   if(info) info.innerHTML = `<div class="note">🗺️ ${head} · กำลังโหลดเหตุการณ์จราจร…</div>`;
   let j;
-  try{ j = await fetch(`/api/traffic-area?s=${g.b[0]}&w=${g.b[1]}&n=${g.b[2]}&e=${g.b[3]}`).then(r=>r.json()); }catch(e){ j = null; }
+  try{ j = await fetch((STATIC ? `${PROXY}/traffic-area` : `/api/traffic-area`) + `?s=${g.b[0]}&w=${g.b[1]}&n=${g.b[2]}&e=${g.b[3]}`).then(r=>r.json()); }catch(e){ j = null; }
   if(seq !== gzSeq || !trMini) return;              // ผู้ใช้เลือกพื้นที่อื่นไปแล้ว
   if(!j || !j.ok){ if(info) info.innerHTML = `<div class="note">🗺️ ${head}${legend}<br><small class="muted">โหลดรายละเอียดเหตุการณ์ไม่ได้: ${esc((j&&j.error)||"เซิร์ฟเวอร์ไม่ตอบ")}</small></div>`; return; }
   const items = (j.items||[]).filter(it=>it.line && it.line.some(([la,lo])=>g.r.some(r=>gzInside([lo,la], r))));

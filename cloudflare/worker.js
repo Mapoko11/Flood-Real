@@ -17,7 +17,7 @@
  *   - รับเฉพาะจากเว็บที่อนุญาต / cache ผลเดิม 5 นาที / จำกัดต่อ IP / เพดานต่อวัน (DAILY)
  */
 
-const DAILY = { traffic: 40, route: 200, search: 50 };   // เพดานต่อวัน (เวลาไทย) — KV ฟรีเขียนได้ 1,000 ครั้ง/วัน
+const DAILY = { traffic: 40, route: 200, search: 50, area: 60 };   // เพดานต่อวัน (เวลาไทย) — KV ฟรีเขียนได้ 1,000 ครั้ง/วัน
 // ภาพสีการจราจร (tile) ไม่นับใน KV: ใช้ cache 2 นาที + โควตา TomTom 200,000/เดือน
 const PER_IP = { max: 15, windowMs: 10 * 60 * 1000 };                  // ต่อ IP ต่อ 10 นาที
 const CACHE_SEC = 300;
@@ -90,6 +90,8 @@ export default {
 
       const tm = url.pathname.match(/^\/tile\/(\d+)\/(\d+)\/(\d+)\.png$/);
       if (tm) return await tile(env, ctx, +tm[1], +tm[2], +tm[3], cors);
+
+      if (url.pathname === "/traffic-area") return await trafficArea(env, ctx, request, url, cors);
 
       if (url.pathname === "/traffic" || url.pathname === "/route") {
         const ip = request.headers.get("CF-Connecting-IP") || "?";
@@ -267,6 +269,46 @@ async function search(env, qRaw) {
   items.sort((x, y) => (x.on_road === y.on_road ? 0 : x.on_road ? -1 : 1) || ((x.cat !== 6) - (y.cat !== 6)) ||
     (y.magnitude - x.magnitude) || (y.length_km - x.length_km));
   return { ok: true, query: q, road, bbox: b, items: items.slice(0, 60), total: items.length, at: nowTh(), cached: false };
+}
+
+/* ---------------- เหตุการณ์จราจรในกรอบพื้นที่ (เขต/อำเภอ) · 1 คำขอ incident ต่อพื้นที่ต่อ 5 นาที ---------------- */
+
+async function trafficArea(env, ctx, request, url, cors) {
+  const [s, w, n, e] = ["s", "w", "n", "e"].map(k => +url.searchParams.get(k));
+  if (![s, w, n, e].every(Number.isFinite) || !(s >= 5 && n <= 21 && w >= 97 && e <= 106 && s < n && w < e) || n - s > 1 || e - w > 1)
+    return json({ ok: false, error: "กรอบพื้นที่ไม่ถูกต้อง" }, 400, cors);
+  const r3 = v => v.toFixed(3);
+  const cacheKey = new Request(`https://cache.floodreal/area/${r3(s)},${r3(w)},${r3(n)},${r3(e)}`);
+  const hit = await caches.default.match(cacheKey);
+  if (hit) return json({ ...(await hit.json()), cached: true }, 200, cors);
+  const ip = request.headers.get("CF-Connecting-IP") || "?";
+  if (!ipAllow(ip)) return json({ ok: false, error: "เรียกถี่เกินไป รอสักครู่แล้วลองใหม่" }, 429, cors);
+  await spend(env, "area");
+  const fields = "{incidents{type,geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,events{description,code},startTime,lastReportTime,from,to,length,delay,roadNumbers}}}";
+  const inc = await (await tt(env, `https://api.tomtom.com/traffic/services/5/incidentDetails?bbox=${[w, s, e, n].map(v => v.toFixed(5)).join(",")}` +
+    `&fields=${encodeURIComponent(fields)}&language=th-TH&timeValidityFilter=present`)).json();
+  const items = [];
+  for (const it of inc.incidents || []) {
+    const p = it.properties || {}, g = it.geometry || {};
+    let coords = g.coordinates || [];
+    if (g.type === "Point") coords = [coords];
+    const pts = coords.filter(c => Array.isArray(c) && c.length >= 2).map(c => [c[1], c[0]]);
+    if (!pts.length) continue;
+    const cat = +(p.iconCategory || 0), mag = +(p.magnitudeOfDelay || 0);
+    items.push({
+      id: String(p.id || ""), category: CATEGORY[cat] || "อื่นๆ", cat, magnitude: mag, magnitude_text: MAGNITUDE[mag] || "",
+      tail: String(p.from || ""), head: String(p.to || ""),
+      length_km: Math.round((p.length || 0) / 10) / 100, delay_min: Math.round((p.delay || 0) / 6) / 10,
+      events: (p.events || []).map(e => e.description || "").slice(0, 3), roads: p.roadNumbers || [],
+      since: String(p.startTime || ""), updated: String(p.lastReportTime || ""),
+      on_road: true, area: true, line: pts.slice(0, 400),
+    });
+  }
+  items.sort((x, y) => ((x.cat !== 6) - (y.cat !== 6)) || (y.magnitude - x.magnitude) || (y.length_km - x.length_km));
+  const result = { ok: true, items: items.slice(0, 120), total: items.length, at: nowTh(), cached: false };
+  ctx.waitUntil(caches.default.put(cacheKey, new Response(JSON.stringify(result), {
+    headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${CACHE_SEC}` } })));
+  return json(result, 200, cors);
 }
 
 /* ---------------- หาเส้นทางเลี่ยงรถติด ---------------- */
