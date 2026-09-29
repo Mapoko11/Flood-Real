@@ -49,6 +49,16 @@ def seed_from_live_site() -> None:
         for k in ("waterlevel", "rain", "main", "traffy", "cctv", "floodboard", "bma_seg"):
             if prev.get(k):
                 seed[k] = prev[k]
+        # Traffy ถูกแยกไปไฟล์ data/traffy.json -> ดึงตัวเต็มกลับมาเป็นข้อมูลรอบก่อน
+        # (ไม่งั้นถ้ารอบนี้ดึงสดไม่ได้ จะได้ items ว่างแล้วไฟล์ traffy.json หายไป)
+        tf0 = prev.get("traffy")
+        if isinstance(tf0, dict) and tf0.get("split") and not tf0.get("items"):
+            try:
+                full = sources._get_json(base + "/data/traffy.json")
+                if isinstance(full, dict) and full.get("items"):
+                    seed["traffy"] = full
+            except Exception as e:  # noqa: BLE001
+                print(f"  seed      Traffy รอบก่อนไม่ได้ ({type(e).__name__})")
         seed["status"] = prev.get("status") or {}
         sources.save_cache(seed)
         print("  seed      ใช้ข้อมูล GISTDA/กรมอุตุฯ/กทม. รอบก่อนจากเว็บที่ออนไลน์")
