@@ -196,6 +196,13 @@
       <button class="btn" type="submit" id="trBtn">ค้นหารถติด</button>
     </form>
     <div class="tr-quick" id="trQuick"></div>
+    <h3 class="tr-h">🗺️ หรือดูรถติดตามพื้นที่ (เขต / อำเภอ)</h3>
+    <div class="gz-card" id="gzBox">
+      <div class="gz-provs" id="gzProvs"></div>
+      <div class="gz-head"><span id="gzTitle" class="muted">เลือกจังหวัดก่อน แล้วเลือกเขต/อำเภอ</span>
+        <input type="search" id="gzFind" placeholder="พิมพ์กรองชื่อ…" maxlength="30" autocomplete="off" hidden></div>
+      <div class="gz-areas" id="gzAreas"></div>
+    </div>
     <div id="trInfo" class="muted"></div>
     <div id="trMap" class="tr-map" style="display:none"></div>
     <div id="trList" class="tr-list"></div>
@@ -236,6 +243,7 @@
 </footer>
 
 <script src="{{ url_for('static', filename='leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='areas.js') }}?v={{ version }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
 <script src="{{ url_for('static', filename='river.js') }}?v={{ version }}"></script>
 </body>

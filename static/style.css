@@ -300,3 +300,22 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .rv-lvl td:last-child,.rv-lvl th:last-child{text-align:center;white-space:nowrap}
 
 #bmaTable th.c,#bmaTable td.c{text-align:center;white-space:nowrap}
+
+.gz-box{display:inline-flex;gap:6px;align-items:center;margin-left:10px}
+.gz-box select{max-width:150px}
+
+/* ดูรถติดตามพื้นที่ */
+.gz-card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.gz-provs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.gz-p{display:flex;flex-direction:column;align-items:center;min-width:104px;background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:8px 14px;font:inherit;font-size:15px;font-weight:600;cursor:pointer;transition:.15s}
+.gz-p small{font-weight:400;font-size:12px;color:var(--muted)}
+.gz-p:hover{border-color:#38bdf8}
+.gz-p.on{background:#0ea5e9;border-color:#0ea5e9;color:#fff}.gz-p.on small{color:#e0f2fe}
+.gz-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+.gz-head input{max-width:190px}
+.gz-areas{display:flex;flex-wrap:wrap;gap:6px;max-height:190px;overflow:auto;padding:2px}
+.gz-a{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:5px 13px;font:inherit;font-size:14px;cursor:pointer;transition:.15s}
+.gz-a:hover{border-color:#38bdf8;transform:translateY(-1px)}
+.gz-a.on{background:#22c55e;border-color:#22c55e;color:#04210f;font-weight:600}
+
+#trForm[hidden],#trQuick[hidden],#gzFind[hidden]{display:none!important}

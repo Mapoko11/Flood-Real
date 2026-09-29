@@ -209,6 +209,24 @@ def api_route():
         return jsonify({"ok": False, "error": f"หาเส้นทางไม่สำเร็จ: {type(e).__name__}"}), 502
 
 
+@app.get("/api/traffic-area")
+def api_traffic_area():
+    ip = request.remote_addr or "?"
+    now = time.time()
+    hits = [t for t in _tf_hits.get(ip, []) if now - t < 600]
+    lim = _tf_limit(ip)
+    if len(hits) >= lim:
+        return jsonify({"ok": False, "error": f"ค้นถี่เกินไป (สูงสุด {lim} ครั้ง/10 นาที) รอสักครู่"}), 429
+    _tf_hits[ip] = hits + [now]
+    try:
+        a = request.args
+        return jsonify(traffic.area(float(a.get("s", "")), float(a.get("w", "")), float(a.get("n", "")), float(a.get("e", ""))))
+    except (ValueError, traffic.TrafficError) as e:
+        return jsonify({"ok": False, "error": str(e) or "พารามิเตอร์ไม่ถูกต้อง"}), 400
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": f"{type(e).__name__}"}), 502
+
+
 @app.get("/api/traffic-tile/<int:z>/<int:x>/<int:y>.png")
 def api_traffic_tile(z, x, y):
     try:
@@ -218,7 +236,7 @@ def api_traffic_tile(z, x, y):
     except Exception:  # noqa: BLE001
         return ("", 204)
     resp = app.response_class(data, mimetype="image/png")
-    resp.headers["Cache-Control"] = "public, max-age=120"
+    resp.headers["Cache-Control"] = "public, max-age=180"
     return resp
 
 

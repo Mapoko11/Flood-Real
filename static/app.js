@@ -192,7 +192,7 @@ function renderStatus(){
 
 /* ---------------- แผนที่ ---------------- */
 function initMap(){
-  map = L.map("map", {preferCanvas:true}).setView([13.2, 101.0], 6);
+  map = L.map("map", {preferCanvas:true, scrollWheelZoom:false}).setView([13.2, 101.0], 6);
   const zcls = ()=>map.getContainer().classList.toggle("zoom-near", map.getZoom()>=12);
   map.on("zoomend", zcls); zcls();
   map.on("popupclose", camStop);   // ปิด popup กล้อง -> หยุดวิดีโอ ไม่กินเน็ต
@@ -924,7 +924,7 @@ function trCard(it, i){
     <div class="h"><span class="pill" style="background:${c};color:#fff">${k.icon} ${esc(k.label)}</span>
       ${it.length_km ? `<span class="big">${fmt(it.length_km,1)} กม.</span>` : ""}
       ${it.delay_min ? `<span class="big" style="color:${c}">+${fmt(it.delay_min,0)} นาที</span>` : ""}
-      ${it.on_road ? `<span class="tag">บนถนนที่ค้น</span>` : `<span class="tag">ถนนใกล้เคียง</span>`}</div>
+      ${it.area ? `<span class="tag">ในพื้นที่</span>` : it.on_road ? `<span class="tag">บนถนนที่ค้น</span>` : `<span class="tag">ถนนใกล้เคียง</span>`}</div>
     <div class="route">${jam ? "🚗 ท้ายแถว (ปลายคิว รถเข้ามาต่อ)" : "จาก"}: <b>${esc(it.tail||"-")}</b><br>${jam ? "🚦 หัวแถว (จุดที่ติด ต้นเหตุ)" : "ถึง"}: <b>${esc(it.head||"-")}</b></div>
     ${k.note ? `<div class="muted tr-note">ℹ️ ${esc(k.note)}</div>` : (it.events.length ? `<div class="muted">${it.events.map(esc).join(" · ")}</div>` : "")}
   </div>`;
@@ -949,12 +949,13 @@ function trFocus(it){
   }, 150);
 }
 /* ---- แผนที่เล็กในแท็บรถติด: เห็นผลทันทีไม่ต้องสลับไปแท็บแผนที่ (มีสีความเร็วรถ TomTom ซ้อน) ---- */
-let trMini = null, trMiniLy = null;
+let trMini = null, trMiniLy = null, gzLy = null;
 function trMiniShow(draw){
   const el = $("#trMap"); if(!el) return;
+  if(gzLy) gzLy.clearLayers();          // ล้างกรอบเขต/อำเภอเดิม
   el.style.display = "block";
   if(!trMini){
-    trMini = L.map("trMap", {zoomControl:true, preferCanvas:true}).setView([13.76,100.55], 12);
+    trMini = L.map("trMap", {zoomControl:true, preferCanvas:true, scrollWheelZoom:false}).setView([13.76,100.55], 12);
     // แผนที่พื้น: ถนน / ดาวเทียม (ปุ่มมุมขวาบน · จำค่าที่เลือกไว้ในเบราว์เซอร์)
     const mkBase = k => k === "sat"
       ? [L.tileLayer(ESRI+"World_Imagery/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, attribution:ATTR + " | จราจร: TomTom"}),
@@ -976,7 +977,7 @@ function trMiniShow(draw){
     setBase(trBase);
     trMini.on("click", e=>setTimeout(()=>{        // ถ้าคลิกโดนเส้นรถติด/หมุด (มีป๊อปอัปของมันเปิดอยู่) ไม่ต้องทำ
       const p = trMini._popup; if(p && trMini.hasLayer(p) && p._source) return; trPickHere(e.latlng); }, 0));      // คลิกบนแผนที่ -> บอกพิกัด/แยกใกล้สุด + ปักหมุดบันทึกได้
-    L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.95, zIndex:300}).addTo(trMini);
+    L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.95, zIndex:300, updateWhenZooming:false, keepBuffer:4}).addTo(trMini);   // ซูมแล้วค่อยโหลด (ไม่โหลดภาพระหว่างเลื่อนซูม) เก็บภาพรอบๆ ไว้
     trMiniLy = L.layerGroup().addTo(trMini);
   }
   trMiniLy.clearLayers();
@@ -1456,7 +1457,7 @@ else if(STATIC){
 $("#lyFlow").addEventListener("change", e=>{
   if(!map) return;
   if(e.target.checked){
-    flowLayer = flowLayer || L.tileLayer(TR_API.tile, {maxZoom:18, minZoom:5, zIndex:350, opacity:.9,
+    flowLayer = flowLayer || L.tileLayer(TR_API.tile, {maxZoom:18, minZoom:5, zIndex:350, opacity:.9, updateWhenZooming:false, keepBuffer:4,
       attribution:"Traffic &copy; TomTom"});
     flowLayer.addTo(map);
   }else if(flowLayer){ map.removeLayer(flowLayer); }
@@ -1529,3 +1530,101 @@ loadVisits(); setInterval(loadVisits, 10*60*1000);
 if(STATIC){ for(const id of ["#fcImgs","#rdImgs"]){ const fi=$(id); if(fi){ fi.style.display="none"; const h=fi.previousElementSibling; if(h && h.tagName==="H3") h.style.display="none"; } } }
 load();
 setInterval(load, 60*1000);   // อ่านจาก cache ในเครื่อง เบา ถี่ได้ -> เห็นข้อมูลใหม่ภายใน 1 นาที
+
+
+/* ขอบเขตเขต/อำเภอ (ตัดจาก OpenGISData-Thailand, ย่อแล้ว ~43 KB) โหลดครั้งแรกที่เลือกพื้นที่ */
+let gzB = null;
+function gzBounds(){
+  gzB = gzB || fetch("static/area_bounds.json").then(r=>r.json()).catch(()=>null);
+  return gzB;
+}
+
+/* เหตุการณ์จราจรในเขต/อำเภอที่เลือก (TomTom incident 1 คำขอ) — คลิกเส้นบนแผนที่เพื่อดูว่าติดอะไร กี่ กม. */
+let gzSeq = 0;
+function gzInside(pt, ring){      // pt=[lon,lat], ring=[[lon,lat],...]
+  let ins = false;
+  for(let i=0, j=ring.length-1; i<ring.length; j=i++){
+    const [xi,yi]=ring[i], [xj,yj]=ring[j];
+    if(((yi>pt[1]) !== (yj>pt[1])) && (pt[0] < (xj-xi)*(pt[1]-yi)/(yj-yi)+xi)) ins = !ins;
+  }
+  return ins;
+}
+async function gzIncidents(prov, name, g, a){
+  const info = $("#trInfo"), list = $("#trList"), seq = ++gzSeq;
+  const head = `<b>${esc(a.unit)}${esc(name)}</b> (${esc(prov==="กรุงเทพมหานคร"?"กรุงเทพฯ":prov)})`;
+  const legend = ` · สีเส้นพื้นหลัง: <b style="color:#ef4444">แดง</b>=ติดหนัก <b style="color:#f59e0b">ส้ม/เหลือง</b>=ปานกลาง <b style="color:#22c55e">เขียว</b>=คล่อง`;
+  if(list) list.innerHTML = "";
+  if(STATIC){ if(info) info.innerHTML = `<div class="note">🗺️ ${head}${legend}<br><small class="muted">รายละเอียดเหตุการณ์ (ติดอะไร กี่ กม.) ดูได้เฉพาะเว็บในเครื่อง</small></div>`; return; }
+  if(info) info.innerHTML = `<div class="note">🗺️ ${head} · กำลังโหลดเหตุการณ์จราจร…</div>`;
+  let j;
+  try{ j = await fetch(`/api/traffic-area?s=${g.b[0]}&w=${g.b[1]}&n=${g.b[2]}&e=${g.b[3]}`).then(r=>r.json()); }catch(e){ j = null; }
+  if(seq !== gzSeq || !trMini) return;              // ผู้ใช้เลือกพื้นที่อื่นไปแล้ว
+  if(!j || !j.ok){ if(info) info.innerHTML = `<div class="note">🗺️ ${head}${legend}<br><small class="muted">โหลดรายละเอียดเหตุการณ์ไม่ได้: ${esc((j&&j.error)||"เซิร์ฟเวอร์ไม่ตอบ")}</small></div>`; return; }
+  const items = (j.items||[]).filter(it=>it.line && it.line.some(([la,lo])=>g.r.some(r=>gzInside([lo,la], r))));
+  const spots = trFloodSpots();
+  items.forEach(it=>{ it.k = trClassify(it, spots); });
+  items.sort((x,y)=>(y.magnitude-x.magnitude) || ((y.length_km||0)-(x.length_km||0)));
+  const jams = items.filter(i=>i.k.kind==="jam"), floods = items.filter(i=>i.k.kind==="flood"), others = items.filter(i=>i.k.kind!=="jam" && i.k.kind!=="flood");
+  const km = jams.reduce((s,i)=>s+(i.length_km||0),0);
+  const parts = [];
+  if(floods.length) parts.push(`<b style="color:#0284c7">🌊 น้ำท่วมขัง ${floods.length} จุด</b>`);
+  if(jams.length) parts.push(`<b style="color:#ef4444">รถติด ${jams.length} ช่วง รวม ${fmt(km,1)} กม.</b>`);
+  if(others.length) parts.push(`<b style="color:#f97316">เหตุอื่น ${others.length} จุด</b>`);
+  if(info) info.innerHTML = `<div class="note">🗺️ ${head} · ` + (parts.length ? parts.join(" · ") : "ไม่มีรถติดหรือเหตุขัดข้องที่รายงานขณะนี้ 👍") +
+    ` <span class="muted">(ข้อมูล ${esc(String(j.at||"").slice(11,16))} น.)</span>${legend}<br><small class="muted">คลิกเส้นบนแผนที่เพื่อดูว่าติดอะไร กี่ กม.</small></div>`;
+  if(!gzLy) gzLy = L.layerGroup().addTo(trMini);
+  items.forEach(it=>L.polyline(it.line, {color:it.k.color, weight:8, opacity:.95, lineCap:"round"})
+    .addTo(gzLy).bindPopup(trCard(it, 0).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280}));
+  if(list){
+    list.innerHTML = items.length ? items.map((it,i)=>trCard(it, i)).join("") : "";
+    list.querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>{
+      const it = items[Number(el.dataset.i)]; if(it) trMiniFocus(it.line, it.k.color); }));
+  }
+}
+
+/* ---------- ดูรถติดตามพื้นที่: กรุงเทพฯ = เขต · จังหวัดอื่น = อำเภอ (ปุ่มกด + ช่องกรองชื่อ) ---------- */
+(function gotoAreaInit(){
+  if(typeof AREAS === "undefined") return;
+  const pv = $("#gzProvs"), ar = $("#gzAreas"), ttl = $("#gzTitle"), fnd = $("#gzFind"); if(!pv || !ar) return;
+  let curP = "", curA = "";
+  const SHORT = {"กรุงเทพมหานคร":"กรุงเทพฯ", "พระนครศรีอยุธยา":"อยุธยา"};
+  pv.innerHTML = Object.keys(AREAS).map(p=>`<button type="button" class="gz-p" data-p="${esc(p)}">${esc(SHORT[p]||p)}<small>${Object.keys(AREAS[p].list).length} ${esc(AREAS[p].unit)}</small></button>`).join("");
+  function drawAreas(){
+    const a = AREAS[curP]; if(!a) return;
+    const f = (fnd.value||"").trim();
+    const names = Object.keys(a.list).filter(n=>!f || n.includes(f));
+    ar.innerHTML = names.length ? names.map(n=>`<button type="button" class="gz-a${n===curA?" on":""}" data-a="${esc(n)}">${esc(n)}</button>`).join("")
+                                : `<span class="muted">ไม่พบ${esc(a.unit)}ที่ตรงกับคำค้น</span>`;
+  }
+  pv.addEventListener("click", e=>{
+    const b = e.target.closest(".gz-p"); if(!b) return;
+    curP = b.dataset.p; curA = ""; fnd.value = ""; fnd.hidden = false;
+    pv.querySelectorAll(".gz-p").forEach(x=>x.classList.toggle("on", x===b));
+    ttl.textContent = `เลือก${AREAS[curP].unit}ใน${SHORT[curP]||curP}`;
+    drawAreas();
+  });
+  fnd.addEventListener("input", drawAreas);
+  ar.addEventListener("click", e=>{
+    const b = e.target.closest(".gz-a"); if(!b) return;
+    curA = b.dataset.a; drawAreas();
+    const a = AREAS[curP], c = a.list[curA];
+    trMiniShow(()=>null);                                   // แผนที่เล็กในแท็บรถติด (มีสีการจราจรอยู่แล้ว)
+    const prov = curP, name = curA;
+    gzBounds().then(B=>{
+      if(!trMini) return;
+      trMini.invalidateSize();
+      const g = B && B[prov] && B[prov][name];
+      if(!g){ trMini.setView(c, a.z); return; }              // ไม่มีข้อมูลขอบเขต -> ซูมไปจุดกึ่งกลางเหมือนเดิม
+      if(!gzLy) gzLy = L.layerGroup().addTo(trMini);
+      gzLy.clearLayers();
+      const ring = r => r.map(([lo,la])=>[la,lo]);
+      const rings = g.r.map(ring);
+      // พื้นนอกเขตทำให้มืดลง (สี่เหลี่ยมใหญ่เจาะรูเป็นเขตที่เลือก) + เส้นขอบเขตสีฟ้า
+      L.polygon([[[-85,-180],[-85,180],[85,180],[85,-180]], ...rings],
+        {stroke:false, fillColor:"#020617", fillOpacity:.55, interactive:false}).addTo(gzLy);
+      rings.forEach(r=>L.polygon(r, {color:"#38bdf8", weight:3, fill:false, interactive:false}).addTo(gzLy));
+      trMini.fitBounds([[g.b[0],g.b[1]],[g.b[2],g.b[3]]], {padding:[12,12], maxZoom:16});
+      gzIncidents(prov, name, g, a);
+    });
+  });
+})();

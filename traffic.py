@@ -40,8 +40,8 @@ MAGNITUDE = {0: "ไม่ทราบ", 1: "เล็กน้อย", 2: "ป�
 _lock = threading.Lock()
 _cache: dict = {}            # q -> (time, result)
 _tile_cache: dict = {}       # (z,x,y) -> (time, bytes)
-_TILE_TTL = 120
-_TILE_MAX = 800
+_TILE_TTL = 180
+_TILE_MAX = 3000
 
 
 class TrafficError(Exception):
@@ -84,7 +84,8 @@ def usage() -> dict:
             u = json.load(f)
     except (OSError, ValueError):
         u = {}
-    return {"month": u.get("month", ""), **{k: {"used": u.get(k, 0), "limit": v} for k, v in MONTHLY_LIMIT.items()}}
+    return {"month": u.get("month", ""), **{k: {"used": u.get(k, 0), "limit": v} for k, v in MONTHLY_LIMIT.items()},
+            "last_tile_error": dict(LAST_TILE_ERR)}
 
 
 def _get(url: str, kind: str, raw: bool = False, body: dict | None = None, timeout: float | None = None):
@@ -102,7 +103,11 @@ def _get(url: str, kind: str, raw: bool = False, body: dict | None = None, timeo
             raise TrafficError("TomTom ปฏิเสธ key (ตรวจ key / สิทธิ์ API ที่ติ๊กไว้)") from None
         if e.code == 429:
             raise TrafficError("TomTom จำกัดความถี่ ลองใหม่อีกสักครู่") from None
-        raise TrafficError(f"TomTom ตอบ HTTP {e.code}") from None
+        try:
+            detail = e.read().decode("utf-8", "replace")[:150].replace("\n", " ")
+        except Exception:  # noqa: BLE001
+            detail = ""
+        raise TrafficError(f"TomTom ตอบ HTTP {e.code} {detail}".strip()) from None
     return data if raw else json.loads(data.decode("utf-8"))
 
 
@@ -215,6 +220,40 @@ def _norm(t: str) -> str:
     return "".join(str(t or "").lower().replace("ถนน", "").replace("ถ.", "").split())
 
 
+def _incident_items(js: dict, words: list, all_on_road: bool = False) -> list:
+    """แปลงผล TomTom incidentDetails เป็นรายการเหตุการณ์ (ใช้ทั้งค้นชื่อถนนและดูตามพื้นที่)"""
+    items = []
+    for inc in js.get("incidents") or []:
+        p = inc.get("properties") or {}
+        g = inc.get("geometry") or {}
+        coords = g.get("coordinates") or []
+        if g.get("type") == "Point":
+            coords = [coords]
+        pts = [[c[1], c[0]] for c in coords if isinstance(c, list) and len(c) >= 2]   # -> [lat,lon]
+        if not pts:
+            continue
+        text = _norm(" ".join([str(p.get("from") or ""), str(p.get("to") or ""),
+                               " ".join(p.get("roadNumbers") or []),
+                               " ".join(e.get("description", "") for e in p.get("events") or [])]))
+        on_road = True if all_on_road else any(w and w in text for w in words)
+        cat = int(p.get("iconCategory") or 0)
+        items.append({
+            "id": str(p.get("id") or ""),
+            "category": CATEGORY.get(cat, "อื่นๆ"), "cat": cat,
+            "magnitude": int(p.get("magnitudeOfDelay") or 0),
+            "magnitude_text": MAGNITUDE.get(int(p.get("magnitudeOfDelay") or 0), ""),
+            "tail": str(p.get("from") or ""), "head": str(p.get("to") or ""),
+            "length_km": round((p.get("length") or 0) / 1000, 2),
+            "delay_min": round((p.get("delay") or 0) / 60, 1),
+            "events": [e.get("description", "") for e in (p.get("events") or [])][:3],
+            "roads": p.get("roadNumbers") or [],
+            "since": str(p.get("startTime") or ""), "updated": str(p.get("lastReportTime") or ""),
+            "on_road": on_road,
+            "line": pts[:400],
+        })
+    return items
+
+
 def search(q: str) -> dict:
     q = (q or "").strip()
     if not (2 <= len(q) <= 80):
@@ -236,35 +275,7 @@ def search(q: str) -> dict:
     js = _get(url, "incident")
 
     words = [_norm(road["name"]), _norm(q)]
-    items = []
-    for inc in js.get("incidents") or []:
-        p = inc.get("properties") or {}
-        g = inc.get("geometry") or {}
-        coords = g.get("coordinates") or []
-        if g.get("type") == "Point":
-            coords = [coords]
-        pts = [[c[1], c[0]] for c in coords if isinstance(c, list) and len(c) >= 2]   # -> [lat,lon]
-        if not pts:
-            continue
-        text = _norm(" ".join([str(p.get("from") or ""), str(p.get("to") or ""),
-                               " ".join(p.get("roadNumbers") or []),
-                               " ".join(e.get("description", "") for e in p.get("events") or [])]))
-        on_road = any(w and w in text for w in words)
-        cat = int(p.get("iconCategory") or 0)
-        items.append({
-            "id": str(p.get("id") or ""),
-            "category": CATEGORY.get(cat, "อื่นๆ"), "cat": cat,
-            "magnitude": int(p.get("magnitudeOfDelay") or 0),
-            "magnitude_text": MAGNITUDE.get(int(p.get("magnitudeOfDelay") or 0), ""),
-            "tail": str(p.get("from") or ""), "head": str(p.get("to") or ""),
-            "length_km": round((p.get("length") or 0) / 1000, 2),
-            "delay_min": round((p.get("delay") or 0) / 60, 1),
-            "events": [e.get("description", "") for e in (p.get("events") or [])][:3],
-            "roads": p.get("roadNumbers") or [],
-            "since": str(p.get("startTime") or ""), "updated": str(p.get("lastReportTime") or ""),
-            "on_road": on_road,
-            "line": pts[:400],
-        })
+    items = _incident_items(js, words)
     # ถนนที่ค้นก่อน -> รถติด (6) ก่อน -> ติดหนักก่อน -> ยาวก่อน
     items.sort(key=lambda i: (not i["on_road"], i["cat"] != 6, -i["magnitude"], -i["length_km"]))
     result = {"ok": True, "query": q, "road": road, "bbox": bbox, "items": items[:60],
@@ -280,6 +291,12 @@ def search(q: str) -> dict:
 # ---------------------------------------------------------------- ภาพสีความเร็วบนถนน (proxy ซ่อน key)
 
 
+_TILE_VARIANTS = [("relative0", {"thickness": 8, "tileSize": 256}), ("relative", {"thickness": 8, "tileSize": 256}),
+                  ("relative", {"tileSize": 256}), ("relative", {})]
+_TILE_VARIANT = [0, False]   # [ลำดับรูปแบบที่ใช้ได้ล่าสุด, เคยสำเร็จแล้วหรือยัง]
+LAST_TILE_ERR: dict = {}    # error ล่าสุดของภาพสีจราจร (ดูที่ /api/traffic-usage)
+
+
 def flow_tile(z: int, x: int, y: int) -> bytes:
     if not (0 <= z <= 18 and 0 <= x < 2 ** z and 0 <= y < 2 ** z):
         raise TrafficError("tile ไม่ถูกต้อง")
@@ -288,9 +305,28 @@ def flow_tile(z: int, x: int, y: int) -> bytes:
         hit = _tile_cache.get(ck)
         if hit and time.time() - hit[0] < _TILE_TTL:
             return hit[1]
-    url = FLOW_TILE_URL.format(z=z, x=x, y=y) + "?" + urllib.parse.urlencode(
-        {"key": _key(), "thickness": 8, "tileSize": 256})
-    data = _get(url, "tile", raw=True, timeout=8)      # ภาพจราจรช้า -> ตัดที่ 8 วิ ไม่ให้กิน thread นาน
+    # TomTom ตอบ 400 บางรูปแบบ (style/พารามิเตอร์) -> ลองรูปแบบสำรองตามลำดับ แล้วจำรูปแบบที่ใช้ได้
+    base = FLOW_TILE_URL.format(z=z, x=x, y=y)
+    data, last_err = None, None
+    order = [_TILE_VARIANT[0]] if _TILE_VARIANT[1] else \
+        [_TILE_VARIANT[0]] + [v for i, v in enumerate(_TILE_VARIANTS) if i != _TILE_VARIANT[0]]   # เคยสำเร็จแล้ว = ใช้แบบเดิมแบบเดียว (ไม่เปลืองโควตา)
+    for vi in order:
+        style, params = _TILE_VARIANTS[vi]
+        if z > 12 and "thickness" in params:     # TomTom: thickness ใช้ได้เฉพาะซูมต่ำ (ซูมสูงตอบ 400) -> ตัดออกให้อัตโนมัติ
+            params = {k: v for k, v in params.items() if k != "thickness"}
+        url = base.replace("/flow/relative0/", f"/flow/{style}/") + "?" + urllib.parse.urlencode({"key": _key(), **params})
+        try:
+            data = _get(url, "tile", raw=True, timeout=8)      # ภาพจราจรช้า -> ตัดที่ 8 วิ ไม่ให้กิน thread นาน
+            _TILE_VARIANT[0], _TILE_VARIANT[1] = vi, True
+            break
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            LAST_TILE_ERR.update({"at": datetime.now().strftime("%H:%M:%S"), "z": z, "variant": f"{style} {params}",
+                                  "err": f"{type(e).__name__}: {e}"[:220]})
+            if "HTTP 400" not in str(e):      # ไม่ใช่ 400 (เช่น timeout/โควตา) ไม่ต้องลองแบบอื่น
+                raise
+    if data is None:
+        raise last_err
     with _lock:
         _tile_cache[ck] = (time.time(), data)
         if len(_tile_cache) > _TILE_MAX:
@@ -638,3 +674,36 @@ def route(src: str, dst: str, avoid: str = "") -> dict:
             for k in sorted(_route_cache, key=lambda k: _route_cache[k][0])[:50]:
                 _route_cache.pop(k, None)
     return result
+
+
+# ---------------------------------------------------------------- ดูรถติดตามพื้นที่ (เขต/อำเภอ)
+_area_cache: dict = {}
+
+
+def area(south: float, west: float, north: float, east: float) -> dict:
+    """เหตุการณ์จราจรทั้งหมดในกรอบพื้นที่ (1 คำขอ incident ต่อครั้ง, cache ตาม TRAFFIC_CACHE_MINUTES)"""
+    if not (-90 <= south < north <= 90 and -180 <= west < east <= 180) or (north - south) > 1.0 or (east - west) > 1.0:
+        raise TrafficError("กรอบพื้นที่ไม่ถูกต้อง")
+    ck = (round(south, 3), round(west, 3), round(north, 3), round(east, 3))
+    ttl = float(CFG.get("TRAFFIC_CACHE_MINUTES", 5)) * 60
+    with _lock:
+        hit = _area_cache.get(ck)
+        if hit and time.time() - hit[0] < ttl:
+            return {**hit[1], "cached": True}
+    fields = ("{incidents{type,geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,"
+              "events{description,code},startTime,lastReportTime,from,to,length,delay,roadNumbers}}}")
+    url = INCIDENT_URL + "?" + urllib.parse.urlencode({
+        "key": _key(), "bbox": f"{west:.5f},{south:.5f},{east:.5f},{north:.5f}", "fields": fields,
+        "language": "th-TH", "timeValidityFilter": "present"})
+    js = _get(url, "incident")
+    items = _incident_items(js, [], all_on_road=True)
+    for it in items:
+        it["area"] = True
+    items.sort(key=lambda i: (i["cat"] != 6, -i["magnitude"], -i["length_km"]))
+    res = {"ok": True, "items": items[:120], "total": len(items), "at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "cached": False}
+    with _lock:
+        _area_cache[ck] = (time.time(), res)
+        if len(_area_cache) > 100:
+            for k in sorted(_area_cache, key=lambda k: _area_cache[k][0])[:50]:
+                _area_cache.pop(k, None)
+    return res
