@@ -947,12 +947,51 @@ function trMiniShow(draw){
       return d; } });
     new BaseCtl().addTo(trMini);
     setBase(trBase);
+    trMini.on("click", e=>setTimeout(()=>{        // ถ้าคลิกโดนเส้นรถติด/หมุด (มีป๊อปอัปของมันเปิดอยู่) ไม่ต้องทำ
+      const p = trMini._popup; if(p && trMini.hasLayer(p) && p._source) return; trPickHere(e.latlng); }, 0));      // คลิกบนแผนที่ -> บอกพิกัด/แยกใกล้สุด + ปักหมุดบันทึกได้
     L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.95, zIndex:300}).addTo(trMini);
     trMiniLy = L.layerGroup().addTo(trMini);
   }
   trMiniLy.clearLayers();
   const b = draw(trMiniLy);
   setTimeout(()=>{ trMini.invalidateSize(); if(b && b.isValid()) trMini.fitBounds(b.pad(0.12), {maxZoom:16}); }, 60);
+}
+/* คลิกแผนที่เล็ก: บอกพิกัด + ชื่อแยก/ถนนใกล้สุด (OSM Overpass + Nominatim เรียกจากเบราว์เซอร์ ไม่ใช้ key) แล้วบันทึกเป็นจุดที่จำไว้ */
+async function trNearName(lat, lon){
+  const out = {jn:null, road:"", area:""};
+  const ov = fetch("https://overpass-api.de/api/interpreter", {method:"POST", signal:AbortSignal.timeout(9000),
+      body:new URLSearchParams({data:`[out:json][timeout:8];(node(around:250,${lat},${lon})["name"~"^(สี่|สาม|ห้า)?แยก"];node(around:250,${lat},${lon})["name:th"~"^(สี่|สาม|ห้า)?แยก"];);out tags 20;`})})
+    .then(r=>r.json()).then(js=>{
+      const bad = t => ["public_transport","railway","amenity","shop","office","tourism","building"].some(k=>k in t) || ["bus_stop","platform"].includes(t.highway);
+      const c = (js.elements||[]).filter(e=>!bad(e.tags||{})).map(e=>({name:(e.tags||{})["name:th"]||(e.tags||{}).name, d:trDistM(lat,lon,e.lat,e.lon)})).sort((a,b)=>a.d-b.d);
+      if(c[0]) out.jn = c[0];
+    }).catch(()=>{});
+  const nm = fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&accept-language=th&lat=${lat}&lon=${lon}`, {signal:AbortSignal.timeout(9000)})
+    .then(r=>r.json()).then(js=>{ const a = js.address||{};
+      out.road = a.road || ""; out.area = [a.suburb||a.quarter||a.city_district, a.city||a.town||a.county, a.state].filter(Boolean).join(" "); }).catch(()=>{});
+  await Promise.all([ov, nm]);
+  return out;
+}
+async function trPickHere(ll){
+  const lat = +ll.lat.toFixed(6), lon = +ll.lng.toFixed(6);
+  const pop = L.popup({maxWidth:300}).setLatLng(ll).setContent(`<b>📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}</b><br><span class="muted">กำลังหาชื่อแยก/ถนนใกล้เคียง…</span>`).openOn(trMini);
+  const r = await trNearName(lat, lon);
+  if(!trMini.hasLayer(pop)) return;
+  const guess = (r.jn && r.jn.d <= 150) ? r.jn.name : ($("#trQ").value.trim() || r.road || "");
+  pop.setContent(`<b>📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}</b>`
+    + (r.jn ? `<br>🚦 แยกใกล้สุด: <b>${esc(r.jn.name)}</b> <span class="muted">(~${fmt(Math.round(r.jn.d/10)*10,0)} ม.)</span>` : `<br><span class="muted">ไม่พบชื่อแยกในรัศมี 250 ม.</span>`)
+    + (r.road ? `<br>🛣 ถนน: ${esc(r.road)}` : "") + (r.area ? `<br><span class="muted">${esc(r.area)}</span>` : "")
+    + `<div style="margin-top:6px">ชื่อที่จะบันทึก:<br><input class="tr-pick-name" value="${esc(guess)}" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;color:#111"></div>`
+    + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="tr-pick-save" style="padding:4px 8px;border-radius:6px;border:0;background:#0ea5e9;color:#fff;cursor:pointer">📌 บันทึกจุดนี้ + ดูรถติด</button>`
+    + `<a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank" rel="noopener" style="align-self:center">Google Maps</a></div>`
+    + `<small class="muted">ชื่อแยกจาก OpenStreetMap (อาจไม่มีทุกแยก)</small>`);
+  const el = pop.getElement(); if(!el) return;
+  el.querySelector(".tr-pick-save").addEventListener("click", ()=>{
+    const nm = el.querySelector(".tr-pick-name").value.trim();
+    if(!nm){ el.querySelector(".tr-pick-name").focus(); return; }
+    trMemSet(trMemKey(nm), {lat, lon, name:nm});
+    trMini.closePopup(); trSearch(nm);
+  });
 }
 function trMiniFocus(line, color){
   if(!trMini || !line || !line.length) return false;
