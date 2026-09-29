@@ -152,6 +152,34 @@ function rvSvg(ch) {
     + `<div class="rv-lg"><span><i style="background:${RV_ST.ok.c}"></i>ปกติ</span><span><i style="background:${RV_ST.warn.c}"></i>น้ำมาก (เฝ้าระวัง)</span><span><i style="background:${RV_ST.crit.c}"></i>ล้นตลิ่ง</span><span><i style="background:${RV_ST.none.c}"></i>ไม่มีข้อมูล</span><span class="muted">กะพริบเร็ว = ระดับสูง</span></div>`;
 }
 
+/* ---------------- ตารางระดับน้ำแม่น้ำเจ้าพระยา (เหนือ -> ใต้) + เวลาวัดของแต่ละสถานี ---------------- */
+function rvLevelTable(ch) {
+  const cp = ch.map(x => x.st).filter(s => /เจ้าพระยา/.test(s.river || ""));
+  if (!cp.length) return "";
+  const upd = String((DATA && DATA.updated_at) || "").replace("T", " ").slice(0, 16);
+  const ref = Date.parse(String((DATA && DATA.updated_at) || "").replace(" ", "T")) || Date.now();
+  const age = t => { const v = Date.parse(String(t || "").replace(" ", "T")); return isNaN(v) ? null : (ref - v) / 3600e3; };
+  const rows = cp.map(s => {
+    const bank = (s.wl_msl != null && s.diff_bank != null) ? s.wl_msl + s.diff_bank : null;
+    const dc = (s.wl_msl != null && s.wl_prev != null) ? Math.round((s.wl_msl - s.wl_prev) * 100) : null;
+    const h = age(s.time), old = h != null && h > 3;
+    return `<tr>
+      <td><b>${esc(s.name)}</b><br><small class="muted">${esc(s.province || "")}</small></td>
+      <td class="num"><b>${s.wl_msl == null ? "–" : fmt(s.wl_msl, 2)}</b></td>
+      <td class="num">${bank == null ? "–" : fmt(bank, 2)}</td>
+      <td class="num">${s.diff_bank == null ? "–" : (s.diff_bank < 0 ? `<b style="color:#ef4444">ล้น ${fmt(-s.diff_bank, 2)}</b>` : fmt(s.diff_bank, 2))}</td>
+      <td class="num">${s.bank_pct == null ? "–" : fmt(s.bank_pct, 0) + "%"} ${rvPill(s)}</td>
+      <td class="num">${dc == null ? "–" : (dc > 0 ? `<span style="color:#ef4444">▲ ${dc}</span>` : dc < 0 ? `<span style="color:#22c55e">▼ ${-dc}</span>` : "• 0")}</td>
+      <td><small${old ? ' style="color:#f59e0b" title="ค่าวัดเก่ากว่า 3 ชม. (สถานีอาจขัดข้อง)"' : ""}>${esc(String(s.time || "–").slice(5, 16))}${old ? " ⚠" : ""}</small></td></tr>`;
+  }).join("");
+  return `<h3 class="rv-h3">📏 ระดับน้ำแม่น้ำเจ้าพระยา (เหนือ → ใต้)</h3>
+    <div class="note" style="margin-bottom:6px">🕒 ระบบดึงข้อมูลล่าสุด <b>${esc(upd || "–")}</b> น. · ดึงใหม่ทุก ~15 นาที · เวลาวัดของแต่ละสถานีอยู่คอลัมน์ขวาสุด (⚠ = ค่าเก่ากว่า 3 ชม.)</div>
+    <div class="table-wrap"><table><thead><tr><th>สถานี</th><th class="num">ระดับน้ำ<br><small>ม.รทก.</small></th><th class="num">ระดับตลิ่ง<br><small>ม.รทก.</small></th>
+      <th class="num">ต่ำกว่าตลิ่ง<br><small>ม.</small></th><th class="num">% ตลิ่ง</th><th class="num">เปลี่ยน<br><small>ซม.</small></th><th>เวลาวัด</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="muted" style="font-size:12px;margin-top:4px">ม.รทก. = เมตรจากระดับน้ำทะเลปานกลาง · "เปลี่ยน" เทียบกับค่าวัดครั้งก่อนของสถานี · ข้อมูล ThaiWater</div>`;
+}
+
 /* ---------------- จังหวัดนนทบุรี (สถานีวัดน้ำ ThaiWater ที่ระบุจังหวัด = นนทบุรี) ---------------- */
 function rvNonthaburi() {
   const st = ((DATA && DATA.waterlevel) || []).filter(w => (w.province || "").includes("นนทบุรี"))
@@ -220,6 +248,7 @@ function rvRender() {
         <span class="muted">ดึงล่าสุด ${esc(((DATA && DATA.updated_at) || "–").replace("T", " "))} · ค่าวัดล่าสุดของสถานี ${esc(rvLatest(ch))}</span></div>
       <div><span class="muted">เวลาน้ำเดินทาง อ้างอิง</span><br><b>${RV_REF}</b> <span class="muted">(ชัยนาท→กรุงเทพฯ ≈ 56 ชม.) · เหนือเขื่อนประมาณ ${rvSpeed} กม./ชม. · เป็นค่าเฉลี่ย ไม่ใช่พยากรณ์</span></div>
     </div>
+    ${rvLevelTable(ch)}
     ${rvNonthaburi()}
     <h3 class="rv-h3">แผนภาพสายน้ำ · ลูกศร = ทิศน้ำไหล (สี = ระดับน้ำ)</h3>
     <div class="rv-svgbox">${rvSvg(ch)}</div>
