@@ -87,6 +87,16 @@ def main() -> int:
 
     payload = webapp.build_payload()
     payload["worker"] = {"running": False, "static": True}
+    # แยก Traffy (ก้อนใหญ่สุด ~6 MB) ไปไฟล์ของมันเอง -> หน้าเว็บโหลดแผนที่/ข้อมูลหลักก่อน แล้วค่อยโหลด Traffy ตามหลัง
+    tf = payload.get("traffy")
+    if isinstance(tf, dict) and tf.get("items"):
+        with open(os.path.join(SITE, "data", "traffy.json"), "w", encoding="utf-8") as f:
+            json.dump(tf, f, ensure_ascii=False, separators=(",", ":"))
+        slim = {k: v for k, v in tf.items() if k != "items"}
+        slim["items"] = []
+        slim["split"] = True
+        slim["n_items"] = len(tf["items"])
+        payload["traffy"] = slim
     with open(os.path.join(SITE, "data", "latest.json"), "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
 

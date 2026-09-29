@@ -111,9 +111,24 @@ async function load(){
     const r = await fetch(API.data(), {cache:"no-store"});
     DATA = await r.json();
     renderAll();
+    loadTraffySplit();
   }catch(e){
     $("#updated").textContent = "โหลดข้อมูลไม่ได้: " + e.message;
   }
+}
+
+/* เว็บ static: Traffy แยกไฟล์ (data/traffy.json) โหลดตามหลัง เพื่อให้แผนที่ขึ้นเร็วขึ้น */
+let tfLoadedAt = "", tfCache = null;
+function loadTraffySplit(){
+  const tf = DATA && DATA.traffy;
+  if(!STATIC || !tf || !tf.split) return;
+  const at = DATA.updated_at || "";
+  if(tfCache && tfLoadedAt === at){ DATA.traffy = tfCache; return; }
+  fetch("data/traffy.json?t=" + encodeURIComponent(at)).then(r=>r.json()).then(full=>{
+    tfCache = full; tfLoadedAt = at; DATA.traffy = full;
+    for(const f of [renderKpis, renderTraffy, renderNb]){ try{ f(); }catch(e){ console.error(f.name, e); } }
+    try{ if(typeof syncLayers==="function") renderMap(); }catch(e){ console.error(e); }
+  }).catch(()=>{});
 }
 
 let satUserPicked = false;
