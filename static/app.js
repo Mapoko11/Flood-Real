@@ -1180,7 +1180,7 @@ async function trSegment(a, b, keep=false){
     const x = jams[Number(el.dataset.k)]; trMiniFocus(x.line, x.col) || trFocus(x); }));
   const camList = trCamsNear([r.line], {maxM:200, limit:12});
   trMiniShow(ly=>{
-    L.polyline(r.line, {color:"#22c55e", weight:6, opacity:.55}).addTo(ly);
+    L.polyline(r.line, {color:"#0ea5e9", weight:6, opacity:.7}).addTo(ly);
     trCamMarkers(ly, camList);
     jams.forEach(x=>{
       const c = x.col;
@@ -1270,10 +1270,10 @@ $("#trQuick").innerHTML = TR_QUICK.map(t=>`<button type="button">${esc(t)}</butt
 $("#trQuick").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>trSearch(b.textContent)));
 $("#trForm").addEventListener("submit", e=>{ e.preventDefault(); trSearch($("#trQ").value); });
 /* ---- หาเส้นทางเลี่ยงรถติด ---- */
-const RT_COLORS = ["#2563eb","#a855f7","#0d9488"];
+const RT_COLORS = ["#a855f7","#db2777","#0d9488"];
 let rtLast = null;
 function rtCard(r, i){
-  const col = r.best ? "#22c55e" : RT_COLORS[i % 3];
+  const col = r.best ? "#0ea5e9" : RT_COLORS[i % 3];
   return `<div class="rt-card ${r.best?"best":""}" data-i="${i}" style="border-left-color:${col}">
     <div class="h"><span class="t">${fmt(r.minutes,0)} นาที</span><span>${fmt(r.km,1)} กม.</span>
       ${r.best ? `<span class="pill" style="background:#22c55e">${r.floodRec?"แนะนำ · เลี่ยงน้ำ":"แนะนำ · เร็วสุด"}</span>` : (r.saves_min===0?"":"")}
@@ -1289,7 +1289,7 @@ function rtCard(r, i){
 function rtDraw(j, focus){
   layers.tr.clearLayers();
   j.routes.forEach((r,i)=>{
-    const col = r.best ? "#22c55e" : RT_COLORS[i % 3];
+    const col = r.best ? "#0ea5e9" : RT_COLORS[i % 3];
     const on = focus===undefined ? r.best : focus===i;
     L.polyline(r.line, {color:col, weight: on ? 8 : 5, opacity: on ? .95 : .45}).addTo(layers.tr)
       .bindPopup(`${fmt(r.minutes,0)} นาที · ${fmt(r.km,1)} กม. · ผ่าน ${r.via.map(esc).join(" → ")}`);

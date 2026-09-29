@@ -185,7 +185,7 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .rt-row{display:flex;gap:6px}
 .rt-row input{flex:1;min-width:0}
 .rt-card{background:var(--panel2);border:1px solid var(--line);border-left:6px solid #64748b;border-radius:10px;padding:10px 12px;cursor:pointer}
-.rt-card.best{border-left-color:#22c55e;box-shadow:0 0 0 1px #22c55e55}
+.rt-card.best{border-left-color:#0ea5e9;box-shadow:0 0 0 1px #0ea5e955}
 .rt-card .h{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .rt-card .t{font-size:22px;font-weight:700}
 .rt-card details{margin-top:6px}
