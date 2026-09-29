@@ -244,16 +244,87 @@ async function search(env, qRaw) {
 /* ---------------- หาเส้นทางเลี่ยงรถติด ---------------- */
 
 function parseLatLon(t) {
-  const m = String(t || "").split(",").map(Number);
-  return (m.length === 2 && m[0] >= 5 && m[0] <= 21 && m[1] >= 97 && m[1] <= 106) ? m : null;
+  // "lat,lon" หรือ "lat,lon@ชื่อ" (ผู้ใช้เลือกจุดเอง/ลากหมุด)
+  const [head, ...rest] = String(t || "").split("@");
+  const m = head.split(",").map(Number);
+  return (m.length === 2 && m[0] >= 5 && m[0] <= 21 && m[1] >= 97 && m[1] <= 106)
+    ? [m[0], m[1], rest.join("@").trim().slice(0, 80) || "ตำแหน่งปัจจุบัน"] : null;
+}
+const TYPE_TH = { "Cross Street": "ทางแยก", "Street": "ถนน", "Geography": "พื้นที่", "POI": "สถานที่", "Point Address": "ที่อยู่", "Address Range": "ที่อยู่" };
+const TYPE_BONUS = { "Cross Street": 1.5, "Street": 1.0, "Geography": 0.6, "POI": 0.5 };
+const normTh = t => String(t || "").toLowerCase().replace(/ถนน/g, "").replace(/ถ\./g, "").replace(/\s+/g, "");
+function candName(r, q) {
+  const a = r.address || {};
+  return (r.poi || {}).name || a.streetName || a.freeformAddress || q;
+}
+/* จัดอันดับใหม่: ชื่อตรงที่พิมพ์ + เป็นทางแยก/ถนน มาก่อนร้านค้า/POI ชื่อคล้าย (sort เสถียร) */
+function rankPlace(pool, q, bias) {
+  // เฉพาะผลที่ชื่อตรงที่พิมพ์และอยู่ไม่ไกลจุดอ้างอิง (<=40 กม.) ถูกยกขึ้นก่อน (ทางแยก > ถนน > สถานที่) ผลอื่นคงลำดับเดิม
+  const nq = normTh(q), bs = bias || BIAS;
+  const sc = r => {
+    const a = r.address || {};
+    const hit = [candName(r, ""), a.streetName || "", a.freeformAddress || ""].some(n => nq && normTh(n).includes(nq)) && dist(r, bs) <= 40;
+    return hit ? -(2 + (TYPE_BONUS[r.type] || 0)) : 0;
+  };
+  return pool.map((r, i) => [r, i]).sort((x, y) => (sc(x[0]) - sc(y[0])) || (x[1] - y[1])).map(v => v[0]);
+}
+function altsOf(pool, q, n = 4) {
+  const out = [];
+  for (const r of pool) {
+    const p = r.position || {};
+    if (typeof p.lat !== "number") continue;
+    if (out.some(o => km(p.lat, p.lon, o.lat, o.lon) < 0.08)) continue;
+    const a = r.address || {};
+    out.push({ name: candName(r, q), kind: TYPE_TH[r.type] || "", area: [a.municipalitySubdivision, a.municipality].filter(Boolean).join(", "),
+      lat: Math.round(p.lat * 1e6) / 1e6, lon: Math.round(p.lon * 1e6) / 1e6 });
+    if (out.length >= n) break;
+  }
+  return out;
+}
+/* ตำแหน่ง "ทางแยก" จาก OSM (Overpass) แม่นกว่า TomTom ที่มักให้จุด "สะพานข้ามแยก" · cache ใน KV (เจอ 30 วัน/ไม่เจอ 7 วัน) · ดึงไม่สำเร็จ -> ใช้ TomTom ต่อ */
+const OSM_BBOX = "13.45,100.25,14.15,100.95";
+async function osmJunction(env, qRaw, bias) {
+  const name = String(qRaw || "").trim().split(/\s+/).join(" ");
+  if (!name.startsWith("แยก") || !/^[฀-๿A-Za-z0-9 .\-]{3,40}$/.test(name)) return null;
+  const kv = "osm:" + normTh(name);
+  try {
+    const c = JSON.parse((await env.COUNTER.get(kv)) || "null");
+    if (c) return c.hit || null;
+  } catch (e) {}
+  const variants = [...new Set([name, name.replace(/ /g, ""), "แยก " + name.slice(3).trim()])];
+  const parts = variants.map(v => `node["name"="${v}"](${OSM_BBOX});node["name:th"="${v}"](${OSM_BBOX});`).join("");
+  let els;
+  try {
+    const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", headers: { "User-Agent": "FloodReal/1.0 (+systemL traffic)" },
+      body: new URLSearchParams({ data: `[out:json][timeout:20];(${parts});out tags center 40;` }), signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return null;
+    els = (await r.json()).elements || [];
+  } catch (e) { return null; }
+  const pts = els.filter(e => typeof e.lat === "number" && typeof e.lon === "number").map(e => [e.lat, e.lon]);
+  let hit = null;
+  if (pts.length) {
+    const b = bias || BIAS;
+    const ref = pts.slice().sort((x, y) => km(b[0], b[1], x[0], x[1]) - km(b[0], b[1], y[0], y[1]))[0];
+    const grp = pts.filter(p => km(ref[0], ref[1], p[0], p[1]) <= 0.3);
+    hit = { lat: Math.round(grp.reduce((a, p) => a + p[0], 0) / grp.length * 1e6) / 1e6, lon: Math.round(grp.reduce((a, p) => a + p[1], 0) / grp.length * 1e6) / 1e6, n: pts.length };
+  }
+  try { await env.COUNTER.put(kv, JSON.stringify({ hit }), { expirationTtl: (hit ? 30 : 7) * 86400 }); } catch (e) {}
+  return hit;
 }
 async function place(env, q, bias) {
   const ll = parseLatLon(q);
-  if (ll) return { name: "ตำแหน่งปัจจุบัน", lat: ll[0], lon: ll[1] };
-  const res = await lookup(env, q, bias || BIAS);
-  if (!res.length) throw new TrafficError(`ไม่พบสถานที่ “${q}”`);
-  const r = res[0], a = r.address || {}, pos = r.position || {};
-  return { name: (r.poi || {}).name || a.freeformAddress || q, lat: pos.lat, lon: pos.lon };
+  if (ll) return { name: ll[2], lat: ll[0], lon: ll[1], alts: [] };
+  const osm = await osmJunction(env, q, bias);
+  const res = rankPlace(await lookup(env, q, bias || BIAS), q, bias);
+  if (!res.length && !osm) throw new TrafficError(`ไม่พบสถานที่ “${q}”`);
+  let alts = altsOf(res, q);
+  if (osm) {
+    const nm = String(q).trim();
+    alts = [{ name: nm, kind: "ทางแยก (OSM)", area: "", lat: osm.lat, lon: osm.lon }].concat(alts.filter(x => km(x.lat, x.lon, osm.lat, osm.lon) >= 0.08)).slice(0, 5);
+    return { name: nm, lat: osm.lat, lon: osm.lon, kind: "ทางแยก (OSM)", alts };
+  }
+  const r = res[0], pos = r.position || {};
+  return { name: candName(r, q), lat: pos.lat, lon: pos.lon, kind: TYPE_TH[r.type] || "", alts };
 }
 function viaStreets(instr, total) {
   const d = {};

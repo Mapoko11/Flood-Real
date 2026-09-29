@@ -788,13 +788,25 @@ document.querySelectorAll("#wdSeg button").forEach(b=>b.addEventListener("click"
   windyLoad();
 }));
 
-document.querySelectorAll("#tabs button").forEach(b=>b.addEventListener("click",()=>{
+let prevTab = "map";
+document.querySelectorAll("#tabs button").forEach(b=>b.addEventListener("click", ev=>{
+  // ผู้ใช้กดออกจากแท็บรถติดเอง -> ล้างเส้น/หมุดรถติด-เส้นทางที่ค้างบนแผนที่หลัก (การกดโดยโปรแกรม เช่น กดการ์ดแล้วเด้งไปดูบนแผนที่ ไม่ล้าง)
+  if(ev.isTrusted && prevTab==="traffic" && b.dataset.tab!=="traffic" && typeof layers!=="undefined" && layers.tr) layers.tr.clearLayers();
+  prevTab = b.dataset.tab;
   if(b.dataset.tab==="fc") fcRadarInit(); else fcRadarRun();   // ออกจากแท็บ -> หยุดวน ประหยัดเครื่อง
   if(b.dataset.tab==="fc" && !windyLoad.done){ windyLoad.done = true; windyLoad(); }   // Windy โหลดครั้งแรกที่เปิดแท็บ
 }));
 
 /* ---------------- รถติด (TomTom) — ใช้ได้เฉพาะเว็บที่มี server (key อยู่ฝั่ง server) ---------------- */
 const TR_COLOR = {0:"#94a3b8",1:"#facc15",2:"#f97316",3:"#ef4444",4:"#7f1d1d"};
+/* สีตามความรุนแรงรถติด: 🔴 แดง = ติดหนัก/หยุดนิ่ง, วิ่งได้ <10 กม./ชม., หรือคิวยาว ≥1 กม. ที่ติดปานกลางขึ้นไป/วิ่ง <15 กม./ชม.
+                         🟠 ส้ม = ติดเบา-ปานกลาง เคลื่อนที่ช้า (วิ่ง <25 กม./ชม.) · ⚪ เทา = ไม่ทราบ */
+function trSevColor(mag, lenKm, speed){
+  const sp = (typeof speed === "number") ? speed : null, len = lenKm || 0;
+  if(mag >= 3 || (sp !== null && sp < 10) || (len >= 1 && (mag >= 2 || (sp !== null && sp < 15)))) return "#ef4444";
+  if(mag >= 1 || (sp !== null && sp < 25)) return "#f97316";
+  return "#94a3b8";
+}
 const TR_QUICK = ["วิภาวดีรังสิต","พหลโยธิน","พระราม 2","บางนา-ตราด","รามอินทรา","แจ้งวัฒนะ","ลาดพร้าว","สุขุมวิท"];
 let flowLayer = null, trLast = null;
 function trPin(txt, bg){ return L.divIcon({className:"", html:`<div class="tr-pin" style="border:2px solid ${bg}">${esc(txt)}</div>`, iconSize:null}); }
@@ -846,7 +858,7 @@ function trClassify(it, spots){
     return {kind:"jam", icon:"🚦", color:TR_COLOR[4], label:"รถหยุดนิ่ง / ติดสะสม",
       note:`${raw} — แต่ไม่พบงานก่อสร้าง อุบัติเหตุ หรือน้ำท่วมยืนยัน มักเป็นรถติดสะสมหน้าไฟแดง/คอขวด`};
   }
-  if(it.cat === 6) return {kind:"jam", icon:"🚗", color:TR_COLOR[it.magnitude]||TR_COLOR[0], label:`รถติด · ${TR_MAG[it.magnitude]||""}`, note:""};
+  if(it.cat === 6) return {kind:"jam", icon:"🚗", color:trSevColor(it.magnitude, it.length_km, null), label:`รถติด · ${TR_MAG[it.magnitude]||""}`, note:""};
   return {kind:"other", icon:"⚠️", color:TR_COLOR[it.magnitude]||TR_COLOR[0], label:it.category + (it.magnitude ? ` · ${TR_MAG[it.magnitude]||""}` : ""), note:""};
 }
 function trCard(it, i){
@@ -854,7 +866,7 @@ function trCard(it, i){
   const c = k.color;
   const jam = k.kind === "jam";
   return `<div class="tr-item" data-i="${i}" style="border-left-color:${c}">
-    <div class="h"><span class="pill" style="background:${c};color:${it.magnitude===1&&k.kind==="jam"?'#111':'#fff'}">${k.icon} ${esc(k.label)}</span>
+    <div class="h"><span class="pill" style="background:${c};color:#fff">${k.icon} ${esc(k.label)}</span>
       ${it.length_km ? `<span class="big">${fmt(it.length_km,1)} กม.</span>` : ""}
       ${it.delay_min ? `<span class="big" style="color:${c}">+${fmt(it.delay_min,0)} นาที</span>` : ""}
       ${it.on_road ? `<span class="tag">บนถนนที่ค้น</span>` : `<span class="tag">ถนนใกล้เคียง</span>`}</div>
@@ -926,10 +938,152 @@ function trLandmark(pt, maxM=450){
   return best;
 }
 function trLmTxt(lm){ return lm ? `ใกล้ ${esc(lm.name.replace(/^\s*(กล้อง|CCTV)\s*/i,""))} <span class="muted">(~${fmt(Math.round(lm.d/10)*10,0)} ม.)</span>` : ""; }
-async function trSegment(a, b){
-  $("#trInfo").textContent = `กำลังดูสภาพจราจรช่วง ${a} → ${b}…`;
+/* จุดที่ผู้ใช้ยืนยัน/ลากหมุดแล้ว: จำไว้ในเบราว์เซอร์นี้ ครั้งหน้าค้นชื่อเดิมจะได้จุดนี้เลยโดยไม่ต้องลากซ้ำ */
+const TR_MEM_KEY = "flood_places_v1";
+const trMemKey = t => String(t||"").toLowerCase().replace(/\s+/g,"").replace(/ถนน|ถ\./g,"");
+function trMemGet(){ try{ return JSON.parse(localStorage.getItem(TR_MEM_KEY)||"{}"); }catch(e){ return {}; } }
+function trMemSet(k, v){ try{ const m = trMemGet(); if(v) m[k] = v; else delete m[k]; localStorage.setItem(TR_MEM_KEY, JSON.stringify(m)); }catch(e){} }
+let trTyped = {A:"", B:""}, trUsedMem = {A:false, B:false};
+function trRemember(tag, lat, lon){
+  const t = trTyped[tag]; if(!t || /^\d+\.?\d*,\d/.test(t)) return;
+  trMemSet(trMemKey(t), {lat, lon, name:t}); trUsedMem[tag] = true;
+}
+let trAlt = {A:[], B:[]};       // ตัวเลือกจุดใกล้เคียงของ A/B (เก็บไว้ตอนผู้ใช้เลือกจุดเอง/ลากหมุด)
+const trPtStr = (p, label) => `${p.lat.toFixed(6)},${p.lon.toFixed(6)}@${label}`;
+function trPicker(tag, pt, alts){
+  if(!alts || alts.length < 2) return "";
+  const cur = alts.findIndex(x=>Math.abs(x.lat-pt.lat)<1e-5 && Math.abs(x.lon-pt.lon)<1e-5);
+  return `<label class="tr-pick">${tag}: <select data-pick="${tag}">` +
+    alts.map((x,i)=>`<option value="${i}"${i===cur?" selected":""}>${esc((x.kind?x.kind+" ":"")+x.name+(x.area?" · "+x.area:""))}</option>`).join("") +
+    (cur < 0 ? `<option selected>📍 จุดที่ลากเอง</option>` : "") + `</select></label> `;
+}
+/* ---- กล้อง CCTV ใกล้เส้นทาง/ถนนที่ค้น (ใช้ฟีด iTIC ที่มีอยู่แล้ว ไม่เสียโควตา TomTom) ---- */
+function trPtLine(c, line){                 // ระยะ (ม.) จากกล้องถึงเส้น + ตำแหน่งตามแนวเส้น (ม. จากต้นเส้น)
+  const kx = 111320*Math.cos(c.lat*Math.PI/180), ky = 110570;
+  let best = {d:Infinity, along:0}, acc = 0;
+  for(let i=0;i<Math.max(1,line.length-1);i++){
+    const a = line[i], b = line[i+1] || a;
+    const ax=(a[1]-c.lon)*kx, ay=(a[0]-c.lat)*ky, bx=(b[1]-c.lon)*kx, by=(b[0]-c.lat)*ky;
+    const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy, t = L2 ? Math.max(0,Math.min(1,-(ax*dx+ay*dy)/L2)) : 0;
+    const d = Math.hypot(ax+t*dx, ay+t*dy), seg = Math.sqrt(L2);
+    if(d < best.d) best = {d, along: acc + t*seg};
+    acc += seg;
+  }
+  return best;
+}
+function trCamsNear(lines, opt={}){
+  const maxM = opt.maxM || 200, limit = opt.limit || 12, nk = opt.nameKey ? trMemKey(opt.nameKey) : "";
+  const cams = ((DATA&&DATA.cctv||{}).cams||[]).filter(hasLL);
+  const ls = (lines||[]).filter(l=>l && l.length);
+  if(!cams.length || (!ls.length && !nk)) return [];
+  const out = [];
+  cams.forEach(c=>{
+    let best = null;
+    ls.forEach(l=>{
+      let s=90,w=180,n=-90,e=-180; l.forEach(([la,lo])=>{ s=Math.min(s,la); n=Math.max(n,la); w=Math.min(w,lo); e=Math.max(e,lo); });
+      const pad = 0.004;
+      if(c.lat < s-pad || c.lat > n+pad || c.lon < w-pad || c.lon > e+pad) return;
+      const r = trPtLine(c, l);
+      if(r.d <= maxM && (!best || r.d < best.d)) best = r;
+    });
+    const bb = opt.bbox, inBB = !bb || (c.lon>=bb[0] && c.lon<=bb[2] && c.lat>=bb[1] && c.lat<=bb[3]);
+    const byName = nk && inBB && trMemKey(c.name).includes(nk);
+    if(best) out.push({c, d:best.d, along:best.along, byName});
+    else if(byName) out.push({c, d:null, along:1e9, byName});
+  });
+  out.sort((x,y)=> (x.along - y.along) || ((x.d||0) - (y.d||0)));
+  return out.slice(0, limit);
+}
+function trCamsRender(list, title, jamLines, isRoute){
+  const box = $("#trCams"); if(!box) return;
+  camStop(); box.style.display = "block";
+  if(!list.length){ box.innerHTML = `<div class="tr-cams-h">📷 กล้อง CCTV ${esc(title)}</div><div class="muted">ไม่มีกล้องใกล้ช่วงนี้ (ฟีดกล้องที่เรามีครอบคลุมบางจุดเท่านั้น)</div>`; return; }
+  const nearJam = c => (jamLines||[]).some(l=>trPtLine(c, l).d <= 250);
+  box.innerHTML = `<div class="tr-cams-h">📷 กล้อง CCTV ${esc(title)} <span class="muted">(${list.length} ตัว${isRoute ? " · เรียงจาก A ไป B" : ""})</span></div><div class="cam-grid">` +
+    list.map((o,i)=>{ const c = o.c, jm = nearJam(c);
+      return `<div class="cam-card" data-i="${i}">
+      <div class="cam-view">${c.img?`<img loading="lazy" referrerpolicy="no-referrer" alt="" src="${safeUrl(c.img)}${c.img.includes("?")?"&":"?"}t=${Date.now()}">`:`<div class="cam-msg">มีแต่วิดีโอ</div>`}</div>
+      <div class="cam-t">${esc(c.name.replace(/^\([^)]*\)\s*/,""))}</div>
+      <div class="muted cam-sub">${isRoute && o.along < 1e8 ? `กม. ${fmt(o.along/1000,1)} จาก A · ` : ""}${o.d!=null ? `ห่างเส้นทาง ~${fmt(Math.round(o.d/10)*10,0)} ม.` : "ตรงชื่อถนน"}${jm ? ` <span class="cam-tag">🚦 ใกล้ช่วงรถติด</span>` : ""}</div>
+      <div class="cam-btns">${c.hls?`<button class="btn btn-ghost cam-live">▶ วิดีโอสด</button>`:""}
+        <button class="btn btn-ghost cam-map">🗺️ ดูบนแผนที่</button>
+        ${c.page?`<a class="btn btn-ghost" href="${safeUrl(c.page)}" target="_blank" rel="noopener">↗</a>`:""}</div></div>`; }).join("") + `</div>`;
+  box.querySelectorAll(".cam-card").forEach(el=>{
+    const c = list[Number(el.dataset.i)].c, view = el.querySelector(".cam-view"), img = view.querySelector("img");
+    if(img) img.onerror = ()=>{ view.innerHTML = `<div class="cam-msg">ไม่มีภาพตอนนี้${c.hls?" — ลอง ▶ วิดีโอสด":""}</div>`; };
+    const lv = el.querySelector(".cam-live"); if(lv) lv.addEventListener("click", ()=>camPlay(c, view));
+    el.querySelector(".cam-map").addEventListener("click", ()=>{
+      if(!trMini) return; $("#trMap").scrollIntoView({behavior:"smooth", block:"center"});
+      trMini.setView([c.lat,c.lon], 17); L.popup({maxWidth:360,minWidth:280}).setLatLng([c.lat,c.lon]).setContent(camPopup(c)).openOn(trMini);
+    });
+  });
+}
+function trCamMarkers(ly, list){
+  list.forEach(o=>L.marker([o.c.lat,o.c.lon], {icon:L.divIcon({className:"", html:`<div class="cam-pin" style="font-size:16px">📷</div>`, iconSize:null, iconAnchor:[10,10]}), zIndexOffset:500})
+    .addTo(ly).bindPopup(()=>camPopup(o.c), {maxWidth:360, minWidth:280}));
+}
+/* ยกเลิก A/B: ล้างผลค้นหา แผนที่เล็ก กล้อง และช่องค้นหา เริ่มใหม่ได้ทันที */
+function trClearAll(){
+  $("#trInfo").innerHTML = ""; $("#trList").innerHTML = "";
+  const cb = $("#trCams"); if(cb){ camStop(); cb.style.display = "none"; cb.innerHTML = ""; }
+  if(trMiniLy) trMiniLy.clearLayers();
+  const mp = $("#trMap"); if(mp) mp.style.display = "none";
+  if(typeof layers !== "undefined" && layers.tr) layers.tr.clearLayers();
+  $("#trQ").value = ""; trTyped = {A:"", B:""}; trUsedMem = {A:false, B:false}; trAlt = {A:[], B:[]};
+  $("#trQ").focus();
+}
+function trMemCount(){ return Object.keys(trMemGet()).length; }
+/* รายการจุดที่จำไว้เป็น dropdown: เลือกเพื่อดูตำแหน่งบนแผนที่เล็กก่อน แล้วค่อยกด "ยกเลิกจุดนี้" */
+function trMemRow(){
+  const m = trMemGet(), ks = Object.keys(m);
+  if(!ks.length) return "";
+  const used = k => ["A","B"].filter(t=>trUsedMem[t] && trMemKey(trTyped[t])===k).map(t=>` · ใช้อยู่ที่ ${t}`).join("");
+  return `<div class="tr-picks">📌 จุดที่จำไว้ (${ks.length}): <select id="trMemSel"><option value="">— เลือกเพื่อดูตำแหน่ง / ยกเลิก —</option>` +
+    ks.map(k=>`<option value="${esc(k)}">${esc(m[k].name || k)} (${m[k].lat.toFixed(4)}, ${m[k].lon.toFixed(4)})${esc(used(k))}</option>`).join("") +
+    `</select> <span id="trMemAct"></span></div>`;
+}
+let trMemMk = null;
+function trMemBind(a, b){
+  const sel = $("#trMemSel"); if(!sel) return;
+  const act = $("#trMemAct");
+  const usedNow = k => ["A","B"].some(t=>trUsedMem[t] && trMemKey(trTyped[t])===k);
+  const dropMk = ()=>{ if(trMemMk && trMini){ trMiniLy.removeLayer(trMemMk); } trMemMk = null; };
+  sel.addEventListener("change", ()=>{
+    dropMk(); act.innerHTML = "";
+    const k = sel.value; if(!k) return;
+    const pt = trMemGet()[k]; if(!pt) return;
+    if(trMini){
+      trMemMk = L.marker([pt.lat, pt.lon], {icon:trPin("📌 จุดที่จำไว้: " + (pt.name||k), "#a855f7"), zIndexOffset:2000}).addTo(trMiniLy);
+      $("#trMap").scrollIntoView({behavior:"smooth", block:"center"});
+      trMini.setView([pt.lat, pt.lon], 17);
+    }
+    act.innerHTML = `<button type="button" class="tr-rev" id="trMemDel">🗑 ยกเลิกจุดนี้</button> <button type="button" class="tr-rev" id="trMemAll">🧹 ล้างทั้งหมด</button>`;
+    $("#trMemDel").addEventListener("click", ()=>{
+      const wasUsed = usedNow(k);
+      trMemSet(k, null);
+      ["A","B"].forEach(t=>{ if(trMemKey(trTyped[t])===k) trUsedMem[t] = false; });
+      if(wasUsed){ trSegment(trTyped.A || a, trTyped.B || b, true).catch(e=>{ $("#trInfo").textContent = "⚠ " + (e && e.message || e); }); return; }
+      dropMk(); const o = [...sel.options].find(x=>x.value===k); if(o) o.remove();
+      sel.value = ""; act.innerHTML = ""; if(sel.options.length < 2) sel.closest(".tr-picks").remove();
+    });
+    $("#trMemAll").addEventListener("click", ()=>{
+      if(!confirm(`ยกเลิกจุดที่จำไว้ทั้งหมด ${trMemCount()} จุด?`)) return;
+      const any = ["A","B"].some(t=>trUsedMem[t]);
+      try{ localStorage.removeItem(TR_MEM_KEY); }catch(e){}
+      trUsedMem = {A:false, B:false};
+      if(any){ trSegment(trTyped.A || a, trTyped.B || b, true).catch(e=>{ $("#trInfo").textContent = "⚠ " + (e && e.message || e); }); return; }
+      dropMk(); sel.closest(".tr-picks").remove();
+    });
+  });
+}
+
+async function trSegment(a, b, keep=false){
+  if(!keep) trAlt = {A:[], B:[]};
+  $("#trInfo").textContent = `กำลังดูสภาพจราจรช่วง ${a.split("@")[1]||a} → ${b.split("@")[1]||b}…`;
   const j = await fetch(TR_API.route(a, b)).then(r=>r.json());
   if(!j.ok){ $("#trInfo").textContent = "⚠ " + (j.error || "หาช่วงถนนไม่สำเร็จ"); return; }
+  if((j.from.alts||[]).length) trAlt.A = j.from.alts;
+  if((j.to.alts||[]).length) trAlt.B = j.to.alts;
   const r = j.routes[0];                                  // เส้นทางหลักของ TomTom (ปกติคือถนนที่ตั้งใจ)
   const cum = trCum(r.line), totKm = cum[cum.length-1]/1000 || r.km;
   const spots = trFloodSpots();
@@ -949,7 +1103,8 @@ async function trSegment(a, b){
     else merged.push({...x, line:x.line.slice(), parts:1});
   });
   jams = merged.map(x=>({...x, len: Math.max(x.len, x.e - x.s), flood: trFloodNear(x.line, spots),
-    tailLm: trLandmark(x.line[0]), headLm: trLandmark(x.line[x.line.length-1]), tailTxt: trStepAt(r.steps, x.s)}));
+    tailLm: trLandmark(x.line[0]), headLm: trLandmark(x.line[x.line.length-1]), tailTxt: trStepAt(r.steps, x.s)}))
+    .map(x=>({...x, col: x.flood ? "#0284c7" : trSevColor(x.magnitude, x.len, x.speed)}));
   const jamKm = jams.reduce((t,x)=>t+x.len,0);
   const atB = jams.filter(x=>totKm - x.e <= 0.3).pop();     // คิวที่หัวแถวอยู่ที่ B
   const head = `<b>A</b> ${esc(j.from.name)} → <b>B</b> ${esc(j.to.name)} · ${fmt(totKm,1)} กม. ผ่าน ${r.via.map(esc).join(" → ")||"-"}`;
@@ -967,14 +1122,28 @@ async function trSegment(a, b){
   }
   $("#trInfo").innerHTML = head + qTxt +
     `<span class="muted">ใช้เวลาทั้งช่วง ${fmt(r.minutes,0)} นาที${r.delay_min ? ` (ช้ากว่าปกติ +${fmt(r.delay_min,0)} นาที)` : ""} · ข้อมูล ${esc(j.at.slice(11,16))} น. · ทิศทางขาไป A → B</span>` +
-    `<br><button type="button" class="tr-rev" id="trRev">⇄ ดูทิศกลับ ${esc(b)} → ${esc(a)}</button>` +
+    `<br><button type="button" class="tr-rev" id="trRev">⇄ ดูทิศกลับ ${esc(j.to.name)} → ${esc(j.from.name)}</button>` +
+    ` <button type="button" class="tr-rev" id="trClear">✖ ยกเลิก A/B (ล้างผล เริ่มใหม่)</button>` +
     (j.warn ? `<br><small style="color:#f97316">⚠ ${esc(j.warn)}</small>` : "") +
-    `<br><small class="muted">ถ้าชื่อ A/B ที่ระบบหาเจอไม่ตรงที่ตั้งใจ ลองพิมพ์ให้ชัดขึ้น เช่น "แยกเกษตร บางเขน" · จุดสังเกตอ้างอิงจากชื่อกล้อง CCTV/เซนเซอร์ กทม. ที่อยู่ใกล้</small>`;
-  $("#trRev").addEventListener("click", ()=>trSearch(`${b} ถึง ${a}`));
+    (totKm > 12 ? `<br><small style="color:#f97316">⚠ A→B ยาว ${fmt(totKm,1)} กม. ผิดปกติสำหรับช่วงแยก — น่าจะได้ตำแหน่ง A/B ผิด ลองเลือกจุดใหม่หรือพิมพ์ให้ชัดขึ้น เช่น "แยกเกษตร บางเขน"</small>` : "") +
+    `<div class="tr-picks">📍 ตำแหน่งไม่ตรง? ${trPicker("A", j.from, trAlt.A)}${trPicker("B", j.to, trAlt.B)}<small class="muted">หรือลากหมุด A/B บนแผนที่ไปวางเอง (ระบบจะจำจุดที่คุณวางไว้)</small>` +
+      `</div>` + trMemRow() +
+    `<small class="muted">จุดสังเกตอ้างอิงจากชื่อกล้อง CCTV/เซนเซอร์ กทม. ที่อยู่ใกล้</small>`;
+  $("#trClear").addEventListener("click", trClearAll);
+  trMemBind(a, b);
+  $("#trInfo").querySelectorAll("select[data-pick]").forEach(sel=>sel.addEventListener("change", ()=>{
+    const tag = sel.dataset.pick, alt = trAlt[tag][Number(sel.value)]; if(!alt) return;
+    const pick = trPtStr(alt, alt.name);
+    trRemember(tag, alt.lat, alt.lon);
+    trSegment(tag==="A" ? pick : a, tag==="B" ? pick : b, true).catch(()=>{ $("#trInfo").textContent = "⚠ หาช่วงถนนไม่สำเร็จ"; });
+  }));
+  $("#trRev").addEventListener("click", ()=>{ const t = trAlt.A; trAlt.A = trAlt.B; trAlt.B = t;
+    [trTyped.A, trTyped.B] = [trTyped.B, trTyped.A]; [trUsedMem.A, trUsedMem.B] = [trUsedMem.B, trUsedMem.A];
+    trSegment(b, a, true).catch(()=>{ $("#trInfo").textContent = "⚠ หาช่วงถนนไม่สำเร็จ"; }); });
   $("#trList").innerHTML = jams.map((x,k)=>{
-    const c = x.flood ? "#0284c7" : (TR_COLOR[x.magnitude]||"#ef4444");
+    const c = x.col;
     return `<div class="tr-item" data-k="${k}" style="border-left-color:${c}">
-      <div class="h"><span class="pill" style="background:${c};color:${x.magnitude===1&&!x.flood?'#111':'#fff'}">${x.flood ? `🌊 น้ำท่วมขัง${x.flood.depth?` ~${fmt(x.flood.depth,0)} ซม.`:""} + รถติด` : `🚗 รถติด · ${TR_MAG[x.magnitude]||""}`}</span>
+      <div class="h"><span class="pill" style="background:${c};color:#fff">${x.flood ? `🌊 น้ำท่วมขัง${x.flood.depth?` ~${fmt(x.flood.depth,0)} ซม.`:""} + รถติด` : `🚗 รถติด · ${TR_MAG[x.magnitude]||""}`}</span>
         <span class="big">${fmt(x.len,1)} กม.</span>${x.delay_min?`<span class="big" style="color:${c}">+${fmt(x.delay_min,0)} นาที</span>`:""}
         ${x.speed?`<span class="tag">วิ่งได้ ~${fmt(x.speed,0)} กม./ชม.</span>`:""}</div>
       <div class="route">🚗 ท้ายแถว (ปลายคิว): ${x.tailLm ? trLmTxt(x.tailLm) + " · " : ""}กม. ${fmt(x.s,1)} จาก A${!x.tailLm && x.tailTxt?` <span class="muted">(หลัง: ${esc(x.tailTxt)})</span>`:""}<br>
@@ -982,39 +1151,39 @@ async function trSegment(a, b){
       ${x.flood?`<div class="muted tr-note">ℹ️ ยืนยันจาก ${esc(x.flood.src)}${x.flood.name?` (${esc(x.flood.name)})`:""} ห่าง ~${fmt(x.flood.d,0)} ม.</div>`:""}
     </div>`; }).join("") || `<div class="note">ไม่มีช่วงรถติดระหว่าง ${esc(j.from.name)} ถึง ${esc(j.to.name)}</div>`;
   $("#trList").querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>{
-    const x = jams[Number(el.dataset.k)]; trMiniFocus(x.line, x.flood ? "#0284c7" : (TR_COLOR[x.magnitude]||"#ef4444")) || trFocus(x); }));
+    const x = jams[Number(el.dataset.k)]; trMiniFocus(x.line, x.col) || trFocus(x); }));
+  const camList = trCamsNear([r.line], {maxM:200, limit:12});
   trMiniShow(ly=>{
     L.polyline(r.line, {color:"#22c55e", weight:6, opacity:.55}).addTo(ly);
+    trCamMarkers(ly, camList);
     jams.forEach(x=>{
-      const c = x.flood ? "#0284c7" : (TR_COLOR[x.magnitude]||"#ef4444");
+      const c = x.col;
       L.polyline(x.line, {color:c, weight:9, opacity:.95}).addTo(ly)
         .bindPopup(`รถติดสะสม ${fmt(x.len,1)} กม. · กม. ${fmt(x.s,1)}–${fmt(x.e,1)}${x.delay_min?` · +${fmt(x.delay_min,0)} นาที`:""}${x.flood?"<br>🌊 มีน้ำท่วมขังช่วงนี้":""}`);
       if(x.line.length > 1) L.circleMarker(x.line[0], {radius:6, color:"#fff", weight:2, fillColor:c, fillOpacity:1}).addTo(ly).bindTooltip("🚗 ท้ายแถว (ปลายคิว)");
     });
-    L.marker([j.from.lat,j.from.lon],{icon:trPin("A ต้นทาง: "+j.from.name,"#2563eb")}).addTo(ly);
-    L.marker([j.to.lat,j.to.lon],{icon:trPin("B ปลายทาง: "+j.to.name,"#ef4444")}).addTo(ly);
+    [["A", j.from, "#2563eb", "ต้นทาง"], ["B", j.to, "#ef4444", "ปลายทาง"]].forEach(([tag, pt, col, th])=>{
+      L.marker([pt.lat,pt.lon], {icon:trPin(`${tag} ${th}: ${pt.name}`, col), draggable:true, zIndexOffset:1000, title:"ลากเพื่อย้ายจุด"}).addTo(ly)
+        .on("dragend", ev=>{ const ll = ev.target.getLatLng(), lbl = `${tag} (ลากเอง)`;
+          const pick = trPtStr({lat:ll.lat, lon:ll.lng}, lbl);
+          trRemember(tag, ll.lat, ll.lng);
+          trSegment(tag==="A" ? pick : a, tag==="B" ? pick : b, true).catch(()=>{ $("#trInfo").textContent = "⚠ หาช่วงถนนไม่สำเร็จ"; }); });
+    });
     return L.latLngBounds(r.line);
   });
-  if(map){
-    layers.tr.clearLayers();
-    L.polyline(r.line, {color:"#22c55e", weight:6, opacity:.6}).addTo(layers.tr);
-    jams.forEach(x=>{
-      const c = x.flood ? "#0284c7" : (TR_COLOR[x.magnitude]||"#ef4444");
-      L.polyline(x.line, {color:c, weight:9, opacity:.95}).addTo(layers.tr)
-        .bindPopup(`รถติดสะสม ${fmt(x.len,1)} กม. · กม. ${fmt(x.s,1)}–${fmt(x.e,1)}${x.delay_min?` · +${fmt(x.delay_min,0)} นาที`:""}${x.flood?"<br>🌊 มีน้ำท่วมขังช่วงนี้":""}`);
-    });
-    L.marker([j.from.lat,j.from.lon],{icon:trPin("A ต้นทาง: "+j.from.name,"#2563eb")}).addTo(layers.tr);
-    L.marker([j.to.lat,j.to.lon],{icon:trPin("B ปลายทาง: "+j.to.name,"#ef4444")}).addTo(layers.tr);
-  }
+  trCamsRender(camList, "ตามเส้นทาง A → B", jams.map(x=>x.line), true);
   trUsage();
 }
 async function trSearch(q){
   if(!TR_OK){ return; }
   q = (q||"").trim(); if(!q) return;
   const seg = q.split(TR_SPLIT).map(t=>t.trim()).filter(Boolean);
+  { const cb = $("#trCams"); if(cb){ camStop(); cb.style.display = "none"; cb.innerHTML = ""; } }
   if(seg.length === 2){
     $("#trQ").value = q; $("#trBtn").disabled = true; $("#trList").innerHTML = "";
-    try{ await trSegment(seg[0], seg[1]); }
+    const mem = trMemGet(), ma = mem[trMemKey(seg[0])], mb = mem[trMemKey(seg[1])];
+    trTyped = {A:seg[0], B:seg[1]}; trUsedMem = {A:!!ma, B:!!mb};
+    try{ await trSegment(ma ? trPtStr(ma, seg[0]) : seg[0], mb ? trPtStr(mb, seg[1]) : seg[1]); }
     catch(e){ $("#trInfo").textContent = "⚠ หาช่วงถนนไม่สำเร็จ"; }
     finally{ $("#trBtn").disabled = false; }
     return;
@@ -1043,14 +1212,16 @@ async function trSearch(q){
       + (near.length ? `<details class="tr-near"><summary>ถนนใกล้เคียง ${near.length} เหตุการณ์ (กดเพื่อดู)</summary>${near.map(it=>trCard(it, idx(it))).join("")}</details>` : "");
     $("#trList").querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>{
       const it = j.items[Number(el.dataset.i)]; trMiniFocus(it.line, it.k.color) || trFocus(it); }));
+    const camList = trCamsNear(mine.map(i=>i.line), {maxM:250, limit:12, nameKey:j.road.name, bbox:j.bbox});
     trMiniShow(ly=>{
+      trCamMarkers(ly, camList);
       j.items.forEach(it=>L.polyline(it.line, {color:it.k.color, weight: it.on_road ? 8 : 4, opacity: it.on_road ? .95 : .35, dashArray: it.on_road ? null : "6 6"})
         .addTo(ly).bindPopup(trCard(it, 0).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280}));
       const bb = (j.road && j.road.bbox) || j.bbox;   // [minLon,minLat,maxLon,maxLat] (Worker มีแค่ j.bbox)
       const own = mine.flatMap(i=>i.line);
       return own.length ? L.latLngBounds(own) : (bb && bb.length === 4 ? L.latLngBounds([[bb[1],bb[0]],[bb[3],bb[2]]]) : null);
     });
-    if(map) trDraw(j);
+    trCamsRender(camList, `ถนน${j.road.name}`, mine.filter(i=>i.k&&i.k.kind==="jam").map(i=>i.line), false);
     trUsage();
   }catch(e){ $("#trInfo").textContent = "⚠ ค้นหาไม่สำเร็จ"; }
   finally{ $("#trBtn").disabled = false; }
@@ -1091,14 +1262,16 @@ function rtDraw(j, focus){
       .bindPopup(`${fmt(r.minutes,0)} นาที · ${fmt(r.km,1)} กม. · ผ่าน ${r.via.map(esc).join(" → ")}`);
     if(on && r.floods) r.floods.forEach(f=>L.marker([f.lat,f.lon],{icon:trPin(`🌊 ${f.depth?fmt(f.depth,0)+" ซม.":"น้ำ"}`,"#ef4444"), zIndexOffset:900}).addTo(layers.tr)
       .bindPopup(`<b>จุดน้ำท่วมบนเส้นทางนี้</b><br>${esc(f.name)}${f.depth?` · ${fmt(f.depth,0)} ซม.`:""}`));
-    if(on) r.jams.forEach(jm=>L.polyline(jm.line,{color: TR_COLOR[jm.magnitude]||"#ef4444", weight:9, opacity:.9}).addTo(layers.tr)
+    if(on) r.jams.forEach(jm=>L.polyline(jm.line,{color: trSevColor(jm.magnitude, trCum(jm.line).pop()/1000, jm.speed), weight:9, opacity:.9}).addTo(layers.tr)
       .bindPopup(`ช่วงรถติด ช้า +${fmt(jm.delay_min,0)} นาที${jm.speed?` · วิ่งได้ ~${fmt(jm.speed,0)} กม./ชม.`:""}`));
   });
   L.marker([j.from.lat,j.from.lon],{icon:trPin("ต้นทาง","#2563eb")}).addTo(layers.tr);
   L.marker([j.to.lat,j.to.lon],{icon:trPin("ปลายทาง","#ef4444")}).addTo(layers.tr);
 }
 async function rtSearch(){
-  const a = $("#rtFrom").value.trim(), b = $("#rtTo").value.trim(); if(!a || !b) return;
+  const a0 = $("#rtFrom").value.trim(), b0 = $("#rtTo").value.trim(); if(!a0 || !b0) return;
+  const rtMem = trMemGet(), rtUse = t => { const m = rtMem[trMemKey(t)]; return m ? trPtStr(m, m.name||t) : t; };   // ใช้จุดที่จำไว้ (ลากหมุดจากแท็บรถติด)
+  const a = rtUse(a0), b = rtUse(b0), rtUsed = [a!==a0, b!==b0].filter(Boolean).length;
   $("#rtBtn").disabled = true; $("#rtInfo").textContent = "กำลังคำนวณเส้นทางจากสภาพจราจรตอนนี้…"; $("#rtList").innerHTML = "";
   try{
     const avoidOn = $("#rtAvoid").checked;
@@ -1112,7 +1285,7 @@ async function rtSearch(){
       let rec = 0; j.routes.forEach((r,i)=>{ const q=j.routes[rec]; if(r.floods.length < q.floods.length || (r.floods.length===q.floods.length && r.minutes < q.minutes)) rec = i; });
       j.routes.forEach((r,i)=>{ r.best = i===rec; r.floodRec = true; });
     }
-    $("#rtInfo").innerHTML = `<b>${esc(j.from.name)}</b> → <b>${esc(j.to.name)}</b> · ${j.routes.length} เส้นทาง (จราจร ${esc(j.at.slice(11,16))} น.) · กดการ์ดเพื่อดูบนแผนที่`
+    $("#rtInfo").innerHTML = `<b>${esc(j.from.name)}</b> → <b>${esc(j.to.name)}</b>` + (rtUsed ? ` <span class="muted">(📌 ใช้จุดที่จำไว้ ${rtUsed} จุด)</span>` : "") + ` · ${j.routes.length} เส้นทาง (จราจร ${esc(j.at.slice(11,16))} น.) · กดการ์ดเพื่อดูบนแผนที่`
       + (avoidOn ? `<div>🌊 เลี่ยงน้ำ: รู้จุดน้ำท่วม ${spots.length} จุด · สั่งให้เส้นทางหลบ ${(j.avoided||[]).length} จุดที่อยู่ในแนวทาง</div>` : "")
       + (j.warn ? `<div class="warn" style="margin-top:6px">⚠ ${esc(j.warn)}</div>` : "");
     $("#rtList").innerHTML = j.routes.map(rtCard).join("");

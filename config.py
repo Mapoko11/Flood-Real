@@ -53,6 +53,7 @@ DEFAULTS = {
 
     # ---- TomTom Traffic (รถติด) — สมัคร key ฟรีที่ developer.tomtom.com ----
     "TOMTOM_API_KEY": "",
+    "LONGDO_API_KEY": "",          # (ไม่บังคับ) key ฟรีจาก api.longdo.com/console — ใช้หาตำแหน่งแยก/สถานที่ไทยเพิ่ม
     "TRAFFIC_CACHE_MINUTES": 5,    # ถนนเดิมค้นซ้ำภายในกี่นาทีใช้ผลเดิม (ประหยัดโควตา 2,500/เดือน)
 
     # ---- เกณฑ์แจ้งเตือน ----

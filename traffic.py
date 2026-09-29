@@ -150,9 +150,17 @@ def _lookup(q: str, key: str, bias=None, near_km: float = 150) -> list:
 
 
 def _find_road(q: str, key: str) -> dict:
-    res = _lookup(q, key)
+    q0 = q
+    m = _PAREN.match(" ".join(str(q or "").split()))
+    q, hint = (m.group(1).strip(), m.group(2).strip()) if m and m.group(1).strip() else (q, "")
+    ld = _longdo(q, None, hint)
+    if ld:      # สถานที่/แยกที่ Longdo รู้จัก -> ใช้ตำแหน่งนั้นเป็นศูนย์กลาง (แม่นกว่า TomTom)
+        d = ld[0]
+        return {"name": d["name"], "area": d.get("area", ""), "type": "POI", "lat": d["lat"], "lon": d["lon"],
+                "bbox": [d["lon"] - 0.012, d["lat"] - 0.011, d["lon"] + 0.012, d["lat"] + 0.011]}
+    res = _lookup((q + " " + hint).strip(), key)
     if not res:
-        raise TrafficError(f"ไม่พบถนน/สถานที่ชื่อ “{q}”")
+        raise TrafficError(f"ไม่พบถนน/สถานที่ชื่อ “{q0}”")
     # เลือกผลที่เป็นถนนก่อน
     res.sort(key=lambda r: 0 if r.get("type") == "Street" else 1)
     r = res[0]
@@ -277,27 +285,189 @@ _route_cache: dict = {}
 
 
 def _parse_latlon(t: str):
+    """'lat,lon' หรือ 'lat,lon@ชื่อ' (ผู้ใช้เลือกจุดเองจากตัวเลือก/ลากหมุด) -> (lat, lon, label)"""
     try:
-        a, b = [float(x) for x in str(t).split(",")]
+        head, _, label = str(t).partition("@")
+        a, b = [float(x) for x in head.split(",")]
         if 5 <= a <= 21 and 97 <= b <= 106:      # อยู่ในไทย
-            return a, b
+            return a, b, (label.strip()[:80] or "ตำแหน่งปัจจุบัน")
     except ValueError:
         pass
     return None
 
 
+_TYPE_TH = {"Cross Street": "ทางแยก", "Street": "ถนน", "Geography": "พื้นที่", "POI": "สถานที่",
+            "Point Address": "ที่อยู่", "Address Range": "ที่อยู่"}
+_TYPE_BONUS = {"Cross Street": 1.5, "Street": 1.0, "Geography": 0.6, "POI": 0.5}
+
+
+def _cand_name(r: dict, q: str) -> str:
+    a = r.get("address") or {}
+    return (r.get("poi") or {}).get("name") or a.get("streetName") or a.get("freeformAddress") or q
+
+
+def _rank_place(pool: list, q: str, bias=None) -> list:
+    """เฉพาะผลที่ 'ชื่อตรงกับที่พิมพ์' และอยู่ไม่ไกลจากจุดอ้างอิง (<=40 กม.) เท่านั้นที่ถูกยกขึ้นก่อน
+    (ทางแยก > ถนน > สถานที่) ผลอื่นคงลำดับคะแนนเดิมของ TomTom ไว้ — กันยกที่อยู่มั่วๆ ขึ้นมาเป็นอันดับ 1"""
+    nq, bias = _norm(q), bias or DEFAULT_BIAS
+
+    def score(r):
+        a = r.get("address") or {}
+        names = [_cand_name(r, ""), a.get("streetName") or "", a.get("freeformAddress") or ""]
+        if nq and any(nq in _norm(n) for n in names) and _dist(r, bias) <= 40:
+            return -(2.0 + _TYPE_BONUS.get(r.get("type", ""), 0.0))
+        return 0.0
+    return sorted(pool, key=score)
+
+
+def _alts(pool: list, q: str, n: int = 4) -> list:
+    out = []
+    for r in pool:
+        pos = r.get("position") or {}
+        if not isinstance(pos.get("lat"), (int, float)):
+            continue
+        if any(_km(pos["lat"], pos["lon"], o["lat"], o["lon"]) < 0.08 for o in out):    # ซ้ำ (<80 ม.) ข้าม
+            continue
+        a = r.get("address") or {}
+        out.append({"name": _cand_name(r, q), "kind": _TYPE_TH.get(r.get("type", ""), ""),
+                    "area": ", ".join(x for x in (a.get("municipalitySubdivision"), a.get("municipality")) if x),
+                    "lat": round(pos["lat"], 6), "lon": round(pos["lon"], 6)})
+        if len(out) >= n:
+            break
+    return out
+
+
+# ---- ตำแหน่ง "ทางแยก" จาก OSM (จุดสัญญาณไฟ/จุดตัดที่ตั้งชื่อ) แม่นกว่า TomTom ที่มักให้จุด "สะพานข้ามแยก"/ที่อยู่ใกล้เคียง ----
+OSM_URL = "https://overpass-api.de/api/interpreter"
+OSM_BBOX = "13.45,100.25,14.15,100.95"          # กทม. + ปริมณฑล
+OSM_FILE = os.path.join(DATA_DIR, "osm_places.json")
+_osm_lock = threading.Lock()
+_OSM_OK = __import__("re").compile(r"^[฀-๿A-Za-z0-9 .\-]{3,40}$")
+
+
+def _osm_cache() -> dict:
+    try:
+        with open(OSM_FILE, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def _osm_junction(q: str, bias=None):
+    """คืน {"lat","lon","n"} หรือ None — ใช้เฉพาะชื่อที่ขึ้นต้น 'แยก' · เก็บผลลง data/osm_places.json (เจอ 30 วัน/ไม่เจอ 7 วัน)
+    ดึงไม่สำเร็จ (เครือข่าย/Overpass ล่ม) -> None เงียบๆ แล้วใช้ TomTom ต่อ (ไม่ cache ความล้มเหลว)"""
+    name = " ".join(str(q or "").split())
+    if not name.startswith("แยก") or not _OSM_OK.match(name):
+        return None
+    key = _norm(name)
+    with _osm_lock:
+        c = _osm_cache().get(key)
+    if c and time.time() - c.get("t", 0) < (30 if c.get("hit") else 7) * 86400:
+        return c["hit"] if c.get("hit") else None
+    variants = {name, name.replace(" ", ""), "แยก " + name[3:].strip()}
+    parts = "".join(f'node["name"="{v}"]({OSM_BBOX});node["name:th"="{v}"]({OSM_BBOX});' for v in variants)
+    body = urllib.parse.urlencode({"data": f"[out:json][timeout:20];({parts});out tags center 40;"}).encode()
+    try:
+        req = urllib.request.Request(OSM_URL, data=body, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=25) as r:
+            els = json.loads(r.read().decode("utf-8")).get("elements") or []
+    except Exception:  # noqa: BLE001
+        return None
+    pts = [(e["lat"], e["lon"]) for e in els if isinstance(e.get("lat"), (int, float)) and isinstance(e.get("lon"), (int, float))]
+    hit = None
+    if pts:
+        b = bias or DEFAULT_BIAS
+        ref = min(pts, key=lambda p: _km(b[0], b[1], p[0], p[1]))
+        grp = [p for p in pts if _km(ref[0], ref[1], p[0], p[1]) <= 0.3]      # จุดในแยกเดียวกัน (สัญญาณไฟหลายตัว) -> เอาค่ากลาง
+        hit = {"lat": round(sum(p[0] for p in grp) / len(grp), 6), "lon": round(sum(p[1] for p in grp) / len(grp), 6), "n": len(pts)}
+    with _osm_lock:
+        c = _osm_cache()
+        c[key] = {"t": time.time(), "hit": hit}
+        try:
+            os.makedirs(os.path.dirname(OSM_FILE), exist_ok=True)
+            with open(OSM_FILE, "w", encoding="utf-8") as fh:
+                json.dump(c, fh, ensure_ascii=False)
+        except OSError:
+            pass
+    return hit
+
+
+def _longdo(q: str, bias=None, hint: str = "") -> list:
+    """ผู้สมัคร (dict name/kind/area/lat/lon) จาก Longdo Map Search — ต้องมี LONGDO_API_KEY ไม่งั้นคืน [] · cache 30 วัน · ล้มเหลวเงียบๆ"""
+    k = (CFG.get("LONGDO_API_KEY") or "").strip()
+    name = " ".join(str(q or "").split())
+    if not k or len(name) < 3:
+        return []
+    ck = "ld:" + _norm(name) + ("|" + _norm(hint) if hint else "")
+    with _osm_lock:
+        c = _osm_cache().get(ck)
+    if c and time.time() - c.get("t", 0) < (30 if c.get("hit") else 3) * 86400:
+        return c.get("hit") or []
+    b = bias or DEFAULT_BIAS
+    qs = urllib.parse.urlencode({"keyword": name, "lon": b[1], "lat": b[0], "span": "40km", "limit": 10, "key": k, "locale": "th"})
+    try:
+        req = urllib.request.Request("https://search.longdo.com/mapsearch/json/search?" + qs, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            data = json.loads(r.read().decode("utf-8")).get("data") or []
+    except Exception:  # noqa: BLE001
+        return []
+    nq, nh = _norm(name), _norm(hint)
+    if nh:   # ผลที่ที่อยู่ตรงกับคำในวงเล็บ (เช่น เขต/ย่าน) มาก่อน
+        data = sorted(data, key=lambda d: 0 if nh in _norm(str(d.get("address") or "") + str(d.get("name") or "")) else 1)
+    out = []
+    for d in data:
+        lat, lon, nm = d.get("lat"), d.get("lon"), str(d.get("name") or "")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)) or nq not in _norm(nm):
+            continue
+        if _km(b[0], b[1], lat, lon) > 40:
+            continue
+        out.append({"name": nm, "kind": "Longdo", "area": str(d.get("address") or "")[:60], "lat": round(lat, 6), "lon": round(lon, 6)})
+        if len(out) >= 3:
+            break
+    with _osm_lock:
+        c = _osm_cache()
+        c[ck] = {"t": time.time(), "hit": out}
+        try:
+            with open(OSM_FILE, "w", encoding="utf-8") as fh:
+                json.dump(c, fh, ensure_ascii=False)
+        except OSError:
+            pass
+    return out
+
+
+_PAREN = __import__("re").compile(r"^(.*?)\s*[(（]([^)）]*)[)）]\s*$")
+
+
 def _place(q: str, key: str, bias=None) -> dict:
     ll = _parse_latlon(q)
     if ll:
-        return {"name": "ตำแหน่งปัจจุบัน", "lat": ll[0], "lon": ll[1]}
-    res = _lookup(q, key, bias=bias)
-    if not res:
-        raise TrafficError(f"ไม่พบสถานที่ “{q}”")
+        return {"name": ll[2], "lat": ll[0], "lon": ll[1], "alts": []}
+    q0 = q
+    m = _PAREN.match(" ".join(str(q or "").split()))
+    hint = ""
+    if m and m.group(1).strip():          # "วัดพระศรีมหาธาตุ (บางเขน)" -> ค้นชื่อหลัก + ใช้ "บางเขน" เป็นตัวช่วยเลือก
+        q, hint = m.group(1).strip(), m.group(2).strip()
+    qs = (q + " " + hint).strip()
+    osm = _osm_junction(q, bias)
+    res = _rank_place(_lookup(qs, key, bias=bias), q, bias)
+    ld0 = _longdo(q, bias, hint)
+    if not res and not osm and not ld0:
+        raise TrafficError(f"ไม่พบสถานที่ “{q0}”")
+    alts = _alts(res, q)
+    ld = ld0
+    if ld and not osm:
+        alts = ld + [x for x in alts if all(_km(x["lat"], x["lon"], y["lat"], y["lon"]) >= 0.08 for y in ld)]
+        return {"name": q.strip(), "lat": ld[0]["lat"], "lon": ld[0]["lon"], "kind": "Longdo", "alts": alts[:5]}
+    if ld:
+        alts = alts + [y for y in ld if _km(y["lat"], y["lon"], osm["lat"], osm["lon"]) >= 0.08]
+    if osm:
+        top = {"name": q.strip(), "kind": "ทางแยก (OSM)", "area": "", "lat": osm["lat"], "lon": osm["lon"]}
+        alts = [top] + [x for x in alts if _km(x["lat"], x["lon"], osm["lat"], osm["lon"]) >= 0.08]
+        return {"name": q.strip(), "lat": osm["lat"], "lon": osm["lon"], "kind": "ทางแยก (OSM)", "alts": alts[:5]}
     r = res[0]
-    a = r.get("address") or {}
     pos = r.get("position") or {}
-    name = (r.get("poi") or {}).get("name") or a.get("freeformAddress") or q
-    return {"name": name, "lat": pos.get("lat"), "lon": pos.get("lon")}
+    return {"name": _cand_name(r, q), "lat": pos.get("lat"), "lon": pos.get("lon"),
+            "kind": _TYPE_TH.get(r.get("type", ""), ""), "alts": alts}
 
 
 def _via_streets(instr: list, total_m: float) -> list:

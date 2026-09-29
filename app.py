@@ -19,7 +19,7 @@ import sources
 import traffic
 from config import CFG
 
-VERSION = "1.15.3"
+VERSION = "1.18.2"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
@@ -165,13 +165,19 @@ def api_radar():
 _tf_hits: dict = {}      # ip -> [เวลาที่ค้น]  กันกดค้นรัวจนโควตา TomTom หมด
 
 
+def _tf_limit(ip: str) -> int:
+    """เครื่องตัวเอง/LAN ใช้ทดสอบ (ลากหมุด เลือกจุด กดซ้ำหลายรอบ) ให้โควตาสูงกว่าคนนอก"""
+    return 120 if (ip in ("127.0.0.1", "::1") or ip.startswith(("192.168.", "10.", "100."))) else 20
+
+
 @app.get("/api/traffic")
 def api_traffic():
     ip = request.remote_addr or "?"
     now = time.time()
     hits = [t for t in _tf_hits.get(ip, []) if now - t < 600]
-    if len(hits) >= 20:
-        return jsonify({"ok": False, "error": "ค้นถี่เกินไป (สูงสุด 20 ครั้ง/10 นาที) รอสักครู่"}), 429
+    lim = _tf_limit(ip)
+    if len(hits) >= lim:
+        return jsonify({"ok": False, "error": f"ค้นถี่เกินไป (สูงสุด {lim} ครั้ง/10 นาที) รอสักครู่"}), 429
     _tf_hits[ip] = hits + [now]
     try:
         return jsonify(traffic.search(request.args.get("q", "")))
@@ -186,8 +192,9 @@ def api_route():
     ip = request.remote_addr or "?"
     now = time.time()
     hits = [t for t in _tf_hits.get(ip, []) if now - t < 600]
-    if len(hits) >= 20:
-        return jsonify({"ok": False, "error": "ค้นถี่เกินไป (สูงสุด 20 ครั้ง/10 นาที) รอสักครู่"}), 429
+    lim = _tf_limit(ip)
+    if len(hits) >= lim:
+        return jsonify({"ok": False, "error": f"ค้นถี่เกินไป (สูงสุด {lim} ครั้ง/10 นาที) รอสักครู่"}), 429
     _tf_hits[ip] = hits + [now]
     try:
         return jsonify(traffic.route(request.args.get("from", ""), request.args.get("to", ""),
