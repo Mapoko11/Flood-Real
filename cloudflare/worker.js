@@ -197,14 +197,19 @@ async function search(env, qRaw) {
   if (q.length < 2 || q.length > 80) throw new TrafficError("พิมพ์ชื่อถนน 2–80 ตัวอักษร");
   await spend(env, "traffic");
   const [qc, hint] = splitParen(q);
-  const isJn = qc.startsWith("แยก");
+  const ll = parseLatLon(q);                                       // "lat,lon@ชื่อ" = เบราว์เซอร์หาพิกัดมาแล้ว (Longdo) หรือจุดที่จำไว้
+  const isJn = !ll && qc.startsWith("แยก");
+  DIAG = {};
   const osm = isJn ? await osmJunction(env, qc, null) : null;      // ชื่อ "แยก…" ใช้จุดจาก OSM ก่อน
-  const ld = osm ? [] : await longdo(env, qc, null, hint);
-  const res = (osm || ld.length) ? [] : await lookup(env, (qc + " " + hint).trim());
-  if (!res.length && !ld.length && !osm) throw new TrafficError(`ไม่พบถนน/สถานที่ชื่อ “${q}”`);
+  const ld = (osm || ll) ? [] : await longdo(env, qc, null, hint);
+  const res = (osm || ld.length || ll) ? [] : await lookup(env, (qc + " " + hint).trim());
+  if (!res.length && !ld.length && !osm && !ll) throw new TrafficError(`ไม่พบถนน/สถานที่ชื่อ “${q}”`);
   let road, tl, br;
   const around = (lat, lon, dl) => { tl = { lat: lat + dl, lon: lon - dl }; br = { lat: lat - dl, lon: lon + dl }; };
-  if (osm) {
+  if (ll) {
+    road = { name: ll[2], area: "ตำแหน่งจาก Longdo (ค้นจากเบราว์เซอร์)", type: "POI", lat: ll[0], lon: ll[1] };
+    around(ll[0], ll[1], 0.011);
+  } else if (osm) {
     road = { name: qc, area: "ตำแหน่งจาก OSM", type: "ทางแยก", lat: osm.lat, lon: osm.lon };
     around(osm.lat, osm.lon, 0.011);
   } else if (ld.length) {
@@ -215,15 +220,16 @@ async function search(env, qRaw) {
     const nq = normTh(qc);
     const rk = r => {
       const a = r.address || {}, nm = normTh((r.poi || {}).name || a.streetName || ""), hit = nq && nm.includes(nq) ? 0 : 1;
-      return isJn ? [hit, r.type === "Cross Street" ? 0 : 1] : [r.type === "Street" ? 0 : 1, hit];
+      const ps = r.position || {}, dist = typeof ps.lat === "number" ? km(BIAS[0], BIAS[1], ps.lat, ps.lon) : 999;
+      return isJn ? [hit, r.type === "Cross Street" ? 0 : 1, dist] : [r.type === "Street" ? 0 : 1, hit, dist];
     };
-    res.sort((x, y) => { const p = rk(x), q2 = rk(y); return (p[0] - q2[0]) || (p[1] - q2[1]); });
+    res.sort((x, y) => { const p = rk(x), q2 = rk(y); return (p[0] - q2[0]) || (p[1] - q2[1]) || (p[2] - q2[2]); });
     const r = res[0], a = r.address || {}, vp = r.viewport || {}, pos = r.position || {};
     tl = vp.topLeftPoint; br = vp.btmRightPoint;
     if (isJn || !tl || !br) around(pos.lat, pos.lon, isJn ? 0.011 : 0.02);
     road = {
       name: a.streetName || (r.poi || {}).name || a.freeformAddress || q,
-      area: [a.municipalitySubdivision, a.municipality, a.countrySubdivision].filter(Boolean).join(", ") + " · ตำแหน่งจาก TomTom",
+      area: [a.municipalitySubdivision, a.municipality, a.countrySubdivision].filter(Boolean).join(", ") + " · ตำแหน่งจาก TomTom" + (DIAG.osm || DIAG.ld ? " (" + [DIAG.osm ? "OSM: " + DIAG.osm : "", DIAG.ld ? "Longdo: " + DIAG.ld : ""].filter(Boolean).join(" · ") + ")" : ""),
       type: r.type || "", lat: pos.lat, lon: pos.lon,
     };
   }
@@ -302,6 +308,7 @@ function altsOf(pool, q, n = 4) {
   return out;
 }
 /* ตำแหน่ง "ทางแยก" จาก OSM (Overpass) แม่นกว่า TomTom ที่มักให้จุด "สะพานข้ามแยก" · cache ใน KV (เจอ 30 วัน/ไม่เจอ 7 วัน) · ดึงไม่สำเร็จ -> ใช้ TomTom ต่อ */
+let DIAG = {};   // เหตุผลที่ OSM/Longdo ไม่ได้ผล (แสดงต่อท้ายข้อความเมื่อถอยไปใช้ TomTom)
 const OSM_BBOX = "13.45,100.25,14.15,100.95";
 async function osmJunction(env, qRaw, bias) {
   const name = String(qRaw || "").trim().split(/\s+/).join(" ");
@@ -313,13 +320,19 @@ async function osmJunction(env, qRaw, bias) {
   } catch (e) {}
   const variants = [...new Set([name, name.replace(/ /g, ""), "แยก " + name.slice(3).trim()])];
   const parts = variants.map(v => `node["name"="${v}"](${OSM_BBOX});node["name:th"="${v}"](${OSM_BBOX});`).join("");
-  let els;
-  try {
-    const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", headers: { "User-Agent": "FloodReal/1.0 (+systemL traffic)" },
-      body: new URLSearchParams({ data: `[out:json][timeout:20];(${parts});out tags center 40;` }), signal: AbortSignal.timeout(15000) });
-    if (!r.ok) return null;
-    els = (await r.json()).elements || [];
-  } catch (e) { return null; }
+  let els = null;
+  const mirrors = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
+  const errs = [];
+  for (const ep of mirrors) {          // ลองเซิร์ฟเวอร์สำรองตามลำดับ ตัวไหนล่มข้ามไปตัวถัดไป
+    try {
+      const r = await fetch(ep, { method: "POST", headers: { "User-Agent": "FloodReal/1.0 (+systemL traffic)" },
+        body: new URLSearchParams({ data: `[out:json][timeout:15];(${parts});out tags center 40;` }), signal: AbortSignal.timeout(8000) });
+      if (!r.ok) { errs.push(new URL(ep).hostname.split(".").slice(-2, -1)[0] + " HTTP " + r.status); continue; }
+      els = (await r.json()).elements || [];
+      break;
+    } catch (e) { errs.push(new URL(ep).hostname.split(".").slice(-2, -1)[0] + " " + String((e && e.name) || e)); }
+  }
+  if (els === null) { DIAG.osm = "Overpass ใช้ไม่ได้ (" + errs.join(", ") + ")"; return null; }
   const pts = els.filter(e => typeof e.lat === "number" && typeof e.lon === "number").map(e => [e.lat, e.lon]);
   let hit = null;
   if (pts.length) {
@@ -339,17 +352,20 @@ function splitParen(q) {
 }
 async function longdo(env, q, bias, hint) {
   const k = String(env.LONGDO_API_KEY || "").trim(), name = String(q || "").trim();
-  if (!k || name.length < 3) return [];
+  if (!k || name.length < 3) { DIAG.ld = k ? "ชื่อสั้นเกินไป" : "ยังไม่ได้ตั้ง Secret LONGDO_API_KEY ใน Worker"; return []; }
   const kv = "ld:" + normTh(name) + (hint ? "|" + normTh(hint) : "");
-  try { const c = JSON.parse((await env.COUNTER.get(kv)) || "null"); if (c) return c.hit || []; } catch (e) {}
+  try { const c = JSON.parse((await env.COUNTER.get(kv)) || "null"); if (c) { if (!(c.hit || []).length) DIAG.ld = "ไม่พบผลลัพธ์ (จากแคช 3 วัน)"; return c.hit || []; } } catch (e) {}
   const b = bias || BIAS;
   let data;
   try {
     const u = "https://search.longdo.com/mapsearch/json/search?" + new URLSearchParams({ keyword: name, lon: b[1], lat: b[0], span: "40km", limit: "10", key: k, locale: "th" });
-    const r = await fetch(u, { headers: { "User-Agent": "FloodReal/1.0 (+systemL traffic)" }, signal: AbortSignal.timeout(10000) });
-    if (!r.ok) return [];
-    data = (await r.json()).data || [];
-  } catch (e) { return []; }
+    const r = await fetch(u, { headers: { "User-Agent": "FloodReal/1.0 (+systemL traffic)", "Referer": "https://mapoko11.github.io/Flood-Real/", "Origin": "https://mapoko11.github.io" }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) { DIAG.ld = "HTTP " + r.status + (r.status === 401 || r.status === 403 ? " (key ไม่ผ่าน/จำกัดโดเมน)" : ""); return []; }
+    const txt = await r.text();
+    let js = null;
+    try { js = JSON.parse(txt); } catch (e) { DIAG.ld = "Longdo ตอบกลับ: " + txt.replace(/\s+/g, " ").slice(0, 90) + " [key ยาว " + k.length + " ตัว · รหัสตรวจ " + [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(k)))].slice(0, 3).map(x => x.toString(16).padStart(2, "0")).join("") + "]"; return []; }
+    data = js.data || [];
+  } catch (e) { DIAG.ld = "เชื่อมต่อ Longdo ไม่ได้ (" + String((e && (e.name + ": " + e.message)) || e).slice(0, 80) + ")"; return []; }
   const nq = normTh(name), nh = normTh(hint);
   if (nh) data = data.slice().sort((x, y) => (normTh((x.address || "") + (x.name || "")).includes(nh) ? 0 : 1) - (normTh((y.address || "") + (y.name || "")).includes(nh) ? 0 : 1));
   const out = [];
@@ -359,6 +375,7 @@ async function longdo(env, q, bias, hint) {
     out.push({ name: String(d.name), kind: "Longdo", area: String(d.address || "").slice(0, 60), lat: Math.round(d.lat * 1e6) / 1e6, lon: Math.round(d.lon * 1e6) / 1e6 });
     if (out.length >= 3) break;
   }
+  if (!out.length) DIAG.ld = data.length ? "ไม่พบชื่อที่ตรงในรัศมี 40 กม." : "ไม่พบผลลัพธ์";
   try { await env.COUNTER.put(kv, JSON.stringify({ hit: out }), { expirationTtl: (out.length ? 30 : 3) * 86400 }); } catch (e) {}
   return out;
 }

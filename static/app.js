@@ -3,7 +3,33 @@
 /* STATIC = true เมื่อเป็นเว็บบน GitHub Pages (ไม่มี server) -> อ่านไฟล์ข้อมูลตรง + เรียก RainViewer เอง */
 const STATIC = !!window.FLOOD_STATIC;
 const PROXY = String(window.FLOOD_PROXY || "").replace(/\/$/, "");   // Cloudflare Worker (เว็บ github.io) — ซ่อน key TomTom
-const TR_OK = !STATIC || !!PROXY;                                    // ใช้ค้นรถติด/เส้นทางได้ไหม
+const TR_OK = !STATIC || !!PROXY;
+/* เว็บ github.io: เรียก Longdo จากเบราว์เซอร์เอง (Longdo ไม่รับคำขอที่มาจาก Cloudflare Worker) · key จำกัดโดเมนไว้ที่ Longdo console */
+const LD_KEY = String(window.FLOOD_LONGDO || "").trim();
+async function ldPoint(q){
+  if(!STATIC || !LD_KEY) return null;
+  const s = String(q||"").trim().split(/\s+/).join(" ");
+  if(s.length < 3 || s.includes("@") || /^\s*-?\d+(\.\d+)?\s*,/.test(s)) return null;
+  const m = s.match(/^(.*?)\s*[(（]([^)）]*)[)）]\s*$/);
+  const name = (m && m[1].trim()) || s, hint = m ? m[2].trim() : "";
+  const ck = "ldc1:" + name + "|" + hint;
+  try{ const c = JSON.parse(sessionStorage.getItem(ck) || "null"); if(c) return c.hit; }catch(e){}
+  const nz = t => String(t||"").replace(/\s+/g,"").toLowerCase();
+  let hit = null, ok = false;
+  try{
+    const u = "https://search.longdo.com/mapsearch/json/search?" + new URLSearchParams({keyword:name, lon:"100.5018", lat:"13.7563", span:"40km", limit:"10", key:LD_KEY, locale:"th"});
+    const r = await fetch(u, {signal: AbortSignal.timeout(8000)});
+    const js = await r.json(); ok = true;
+    const nq = nz(name), nh = nz(hint);
+    let d = (js.data||[]).filter(x => typeof x.lat === "number" && typeof x.lon === "number" && nz(x.name).includes(nq)
+                                   && trDistM(13.7563, 100.5018, x.lat, x.lon) <= 40000);
+    if(nh) d.sort((a,b) => (nz((a.address||"")+a.name).includes(nh) ? 0 : 1) - (nz((b.address||"")+b.name).includes(nh) ? 0 : 1));
+    if(d[0]) hit = {lat: d[0].lat, lon: d[0].lon, name: String(d[0].name)};
+  }catch(e){}
+  if(ok){ try{ sessionStorage.setItem(ck, JSON.stringify({hit})); }catch(e){} }
+  return hit;
+}
+const ldUse = async t => { const p = await ldPoint(t); return p ? trPtStr(p, t) : t; };                                    // ใช้ค้นรถติด/เส้นทางได้ไหม
 const TR_API = {
   traffic: q => STATIC ? `${PROXY}/traffic?q=${encodeURIComponent(q)}` : `/api/traffic?q=${encodeURIComponent(q)}`,
   route: (a,b,av) => (STATIC ? `${PROXY}/route` : `/api/route`) + `?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}` + (av ? `&avoid=${encodeURIComponent(av)}` : ""),
@@ -1183,14 +1209,14 @@ async function trSearch(q){
     $("#trQ").value = q; $("#trBtn").disabled = true; $("#trList").innerHTML = "";
     const mem = trMemGet(), ma = mem[trMemKey(seg[0])], mb = mem[trMemKey(seg[1])];
     trTyped = {A:seg[0], B:seg[1]}; trUsedMem = {A:!!ma, B:!!mb};
-    try{ await trSegment(ma ? trPtStr(ma, seg[0]) : seg[0], mb ? trPtStr(mb, seg[1]) : seg[1]); }
+    try{ await trSegment(ma ? trPtStr(ma, seg[0]) : await ldUse(seg[0]), mb ? trPtStr(mb, seg[1]) : await ldUse(seg[1])); }
     catch(e){ $("#trInfo").textContent = "⚠ หาช่วงถนนไม่สำเร็จ"; }
     finally{ $("#trBtn").disabled = false; }
     return;
   }
   $("#trQ").value = q; $("#trBtn").disabled = true; $("#trInfo").textContent = "กำลังค้นหา…"; $("#trList").innerHTML = "";
   try{
-    const r = await fetch(TR_API.traffic(q)); const j = await r.json();
+    const r = await fetch(TR_API.traffic(await ldUse(q))); const j = await r.json();
     if(!j.ok){ $("#trInfo").textContent = "⚠ " + (j.error || "ค้นหาไม่สำเร็จ"); return; }
     trLast = j;
     // แยก "บนถนนที่ค้น" กับ "ถนนใกล้เคียง" ให้ชัด (ของใกล้เคียงพับเก็บไว้)
@@ -1271,7 +1297,9 @@ function rtDraw(j, focus){
 async function rtSearch(){
   const a0 = $("#rtFrom").value.trim(), b0 = $("#rtTo").value.trim(); if(!a0 || !b0) return;
   const rtMem = trMemGet(), rtUse = t => { const m = rtMem[trMemKey(t)]; return m ? trPtStr(m, m.name||t) : t; };   // ใช้จุดที่จำไว้ (ลากหมุดจากแท็บรถติด)
-  const a = rtUse(a0), b = rtUse(b0), rtUsed = [a!==a0, b!==b0].filter(Boolean).length;
+  let a = rtUse(a0), b = rtUse(b0); const rtUsed = [a!==a0, b!==b0].filter(Boolean).length;
+  if(a === a0) a = await ldUse(a0);
+  if(b === b0) b = await ldUse(b0);
   $("#rtBtn").disabled = true; $("#rtInfo").textContent = "กำลังคำนวณเส้นทางจากสภาพจราจรตอนนี้…"; $("#rtList").innerHTML = "";
   try{
     const avoidOn = $("#rtAvoid").checked;

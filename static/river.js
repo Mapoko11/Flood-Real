@@ -152,6 +152,25 @@ function rvSvg(ch) {
     + `<div class="rv-lg"><span><i style="background:${RV_ST.ok.c}"></i>ปกติ</span><span><i style="background:${RV_ST.warn.c}"></i>น้ำมาก (เฝ้าระวัง)</span><span><i style="background:${RV_ST.crit.c}"></i>ล้นตลิ่ง</span><span><i style="background:${RV_ST.none.c}"></i>ไม่มีข้อมูล</span><span class="muted">กะพริบเร็ว = ระดับสูง</span></div>`;
 }
 
+/* ---------------- จังหวัดนนทบุรี (สถานีวัดน้ำ ThaiWater ที่ระบุจังหวัด = นนทบุรี) ---------------- */
+function rvNonthaburi() {
+  const st = ((DATA && DATA.waterlevel) || []).filter(w => (w.province || "").includes("นนทบุรี"))
+    .sort((a, b) => (b.bank_pct ?? -1) - (a.bank_pct ?? -1));
+  const cards = st.map(s => {
+    const c = rvColor(s), [ar, tt, tc] = rvTrend(s);
+    const pct = s.bank_pct == null ? null : Math.max(0, Math.min(130, s.bank_pct));
+    return `<div class="rv-dam"><div class="t"><b>${esc(s.name)}</b>${rvPill(s)}</div>
+      <div class="sub">${esc(s.amphoe || "")}${s.river ? " · " + esc(s.river) : ""}</div>
+      <div class="rv-bar"><i style="width:${pct == null ? 0 : (pct / 130 * 100)}%;background:${c}"></i><u style="left:${100 / 1.3}%"></u></div>
+      <div class="sub">ระดับ ${s.bank_pct == null ? "–" : fmt(s.bank_pct, 0) + "% ของตลิ่ง"} · ${s.wl_msl == null ? "–" : fmt(s.wl_msl, 2) + " ม.รทก."}
+        · <span style="color:${tc}">${ar} ${esc(tt)}</span></div>
+      <div class="sub muted">ค่าวัดล่าสุด ${esc(String(s.time || "–").replace("T", " ").slice(0, 16))}</div></div>`;
+  }).join("");
+  return `<h3 class="rv-h3">📍 จังหวัดนนทบุรี · สถานีวัดระดับน้ำ (${st.length} สถานี)</h3>
+    <div class="rv-dams">${cards || '<div class="muted">ไม่มีข้อมูลสถานีนนทบุรีรอบนี้</div>'}</div>
+    <div class="note" style="margin-top:6px">ข้อมูลจาก ThaiWater ที่ระบบมี (ตอนนี้ได้ ${st.length} สถานี) · ยังไม่รวมรายงานจุดน้ำท่วมของนนทบุรี — ดูเพิ่มที่ nonthaburi.thaiwater.net/wl</div>`;
+}
+
 /* ---------------- แท็บ ---------------- */
 const rvLatest = ch => { const t = ch.map(x => String(x.st.time || "")).filter(Boolean).sort(); return t.length ? t[t.length - 1].replace("T", " ").slice(0, 16) : "–"; };
 function rvRender() {
@@ -201,6 +220,7 @@ function rvRender() {
         <span class="muted">ดึงล่าสุด ${esc(((DATA && DATA.updated_at) || "–").replace("T", " "))} · ค่าวัดล่าสุดของสถานี ${esc(rvLatest(ch))}</span></div>
       <div><span class="muted">เวลาน้ำเดินทาง อ้างอิง</span><br><b>${RV_REF}</b> <span class="muted">(ชัยนาท→กรุงเทพฯ ≈ 56 ชม.) · เหนือเขื่อนประมาณ ${rvSpeed} กม./ชม. · เป็นค่าเฉลี่ย ไม่ใช่พยากรณ์</span></div>
     </div>
+    ${rvNonthaburi()}
     <h3 class="rv-h3">แผนภาพสายน้ำ · ลูกศร = ทิศน้ำไหล (สี = ระดับน้ำ)</h3>
     <div class="rv-svgbox">${rvSvg(ch)}</div>
     <h3 class="rv-h3">ต้นน้ำ · เขื่อน</h3>

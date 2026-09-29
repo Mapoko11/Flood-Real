@@ -70,7 +70,8 @@ def main() -> int:
     html = webapp.app.test_client().get("/").get_data(as_text=True)
     html = html.replace('"/static/', '"static/')
     proxy = json.dumps(os.environ.get("TRAFFIC_PROXY_URL", "").strip())   # Worker ซ่อน key (ไม่ใช่ความลับ)
-    html = html.replace("<script src=", f"<script>window.FLOOD_STATIC=true;window.FLOOD_PROXY={proxy};</script>\n<script src=", 1)
+    ldk = json.dumps(os.environ.get("LONGDO_WEB_KEY", "").strip())       # key Longdo สำหรับเบราว์เซอร์ (จำกัดโดเมนที่ Longdo console)
+    html = html.replace("<script src=", f"<script>window.FLOOD_STATIC=true;window.FLOOD_PROXY={proxy};window.FLOOD_LONGDO={ldk};</script>\n<script src=", 1)
     # นับผู้เข้าชม: Cloudflare Web Analytics (ไม่ใช้คุกกี้, token ไม่ใช่ความลับ) — ใส่เฉพาะเว็บ github.io
     cf_token = os.environ.get("CF_BEACON_TOKEN", "cad73c7e87694fa6af05ae26be438d38").strip()
     if cf_token:
