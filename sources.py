@@ -662,6 +662,22 @@ def _bma_state(txt: str) -> str:
     return "unknown"
 
 
+def _bma_push(name: str, obj) -> None:
+    """ส่งข้อมูล กทม. ที่ดึงตรงได้ ขึ้น Worker (ให้เว็บ GitHub ใช้ต่อ) — ต้องตั้ง BMA_PUSH_TOKEN ใน config_local.json · ล้มเหลวเงียบๆ"""
+    tok = (CFG.get("BMA_PUSH_TOKEN") or "").strip()
+    proxy = (CFG.get("BMA_PROXY_URL") or "").strip()
+    if not tok or not proxy:
+        return
+    try:
+        req = urllib.request.Request(proxy.rsplit("/", 1)[0] + "/bma-push?name=" + name,
+                                     data=json.dumps(obj, ensure_ascii=False).encode("utf-8"), method="POST",
+                                     headers={"Content-Type": "application/json", "X-Push-Token": tok, "User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 BMA_STALE_MIN = 60     # เวลาวัดล่าสุดเก่ากว่านี้ = ข้อมูลที่ได้ "ค้าง" (Worker อาจส่งชุดเก่าที่จำไว้เพราะเว็บ กทม. ไม่ตอบ)
 
 
@@ -768,6 +784,8 @@ def fetch_bma() -> dict:
     pts.sort(key=lambda p: (order.get(p["state"], 9), -(p["cm"] or 0)))
     count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
     nt, na = _newest(p["time"] for p in pts)
+    if via.startswith("direct"):
+        _bma_push("flood", js)
     return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
             "hist": _bma_hist(old.get("hist"), pts),
             "newest": nt, "stale_min": round(na) if (na is not None and na > BMA_STALE_MIN) else 0,
@@ -996,6 +1014,8 @@ def fetch_bma_canal() -> dict:
     pts.sort(key=lambda p: (order.get(p["state"], 9), p["name"]))
     count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
     nt, na = _newest(p["time"] for p in pts)
+    if via.startswith("direct"):
+        _bma_push("canal", rows)
     return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
             "newest": nt, "stale_min": round(na) if (na is not None and na > BMA_STALE_MIN) else 0,
             "source": "https://weather.bangkok.go.th/water"}

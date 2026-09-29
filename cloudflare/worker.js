@@ -55,6 +55,8 @@ export default {
       "X-Content-Type-Options": "nosniff",
     };
     if (request.method === "OPTIONS") return new Response(null, { headers: cors });
+    // เครื่องเจ้าของ (Flood real ในเครื่อง) ส่งข้อมูล กทม. ที่ดึงตรงได้ขึ้นมาให้ (กทม. บล็อก Cloudflare/GitHub บ่อย)
+    if (request.method === "POST" && url.pathname === "/bma-push") return await bmaPush(request, env, url, cors);
     if (request.method !== "GET") return json({ ok: false, error: "method" }, 405, cors);
 
     // ข้อมูลน้ำท่วมถนน กทม. (ข้อมูลสาธารณะ) — เปิดให้ server ในเครื่อง/GitHub Actions เรียกได้ด้วย
@@ -548,6 +550,24 @@ const BMA_SRC = {
            method: "POST", body: "payload=TEST_DATA_GOES_HERE", ok: (j) => Array.isArray(j) && j.length > 0 },
 };
 
+/* รับข้อมูล กทม. จากเครื่องเจ้าของ: ต้องมี header X-Push-Token = secret BMA_PUSH_TOKEN · ตรวจรูปแบบก่อนเก็บ */
+async function bmaPush(request, env, url, cors) {
+  const tok = String(env.BMA_PUSH_TOKEN || "");
+  const got = request.headers.get("X-Push-Token") || "";
+  if (tok.length < 16 || got !== tok) return json({ ok: false, error: "ไม่อนุญาต" }, 403, cors);
+  const name = url.searchParams.get("name") === "canal" ? "canal" : "flood";
+  const src = BMA_SRC[name];
+  const t = await request.text();
+  if (t.length > 3e6) return json({ ok: false, error: "ใหญ่เกิน" }, 413, cors);
+  let j; try { j = JSON.parse(t); } catch (e) { return json({ ok: false, error: "ไม่ใช่ JSON" }, 400, cors); }
+  if (!src.ok(j)) return json({ ok: false, error: "รูปแบบไม่ถูก" }, 400, cors);
+  const kvKey = name === "flood" ? "bma:last" : "bma:" + name;
+  await env.COUNTER.put(kvKey, t, { expirationTtl: 2 * 86400 });
+  await env.COUNTER.put(kvKey + ":try", JSON.stringify({ t: Date.now(), ok: true, by: "push" }), { expirationTtl: 86400 });
+  try { await caches.default.delete(new Request("https://floodreal-cache.local/bma-" + name)); } catch (e) {}
+  return json({ ok: true, name, bytes: t.length }, 200, cors);
+}
+
 async function bma(env, ctx, cors, name = "flood") {
   const src = BMA_SRC[name];
   const key = new Request("https://floodreal-cache.local/bma-" + name);
@@ -583,7 +603,7 @@ async function bma(env, ctx, cors, name = "flood") {
     if (!body) return json({ ok: false, error: status }, 502, cors);
   }
   ctx.waitUntil(env.COUNTER.put(kvKey + ":try", JSON.stringify({ t: Date.now(), ok: status === "ok" }), { expirationTtl: 86400 }));
-  const ttl = status === "ok" ? 1200 : 1800;   // ได้ผล จำ 20 นาที · พังแล้วรอ 30 นาทีค่อยลองต้นทางใหม่ (กทม. บล็อก IP ที่เรียกถี่)
+  const ttl = status === "ok" ? 300 : 600;   // cache ของศูนย์ข้อมูลสั้นลง (ข้อมูลที่เครื่องเจ้าของส่งมาจะเห็นเร็ว) · กันยิงต้นทางด้วย ":try" ใน KV แทน   // ได้ผล จำ 20 นาที · พังแล้วรอ 30 นาทีค่อยลองต้นทางใหม่ (กทม. บล็อก IP ที่เรียกถี่)
   ctx.waitUntil(caches.default.put(key, new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${ttl}` } })));
   return new Response(body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "X-Bma": status } });
 }

@@ -41,6 +41,7 @@ DEFAULTS = {
     "BMA_FLOOD_URL": "https://weather.bangkok.go.th/Flood/PageMap/GetData?id=0",
     # ดึงผ่าน Cloudflare Worker ก่อน (ใช้ IP คนละชุด + cache 10 นาที) ถ้าไม่ได้ค่อยดึงตรง  ใส่ "" = ดึงตรงอย่างเดียว
     "BMA_PROXY_URL": "https://floodreal-proxy.cheabracha0920.workers.dev/bma",
+    "BMA_PUSH_TOKEN": "",          # รหัสลับส่งข้อมูล กทม. จากเครื่องนี้ขึ้น Worker (ต้องตรงกับ Secret BMA_PUSH_TOKEN ใน Worker)
 
     # ---- กล้อง CCTV (iTIC / กรมทางหลวง ผ่าน Longdo) — ไม่ต้องใช้ key ----
     "CCTV_ENABLED": True,
