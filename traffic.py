@@ -87,7 +87,7 @@ def usage() -> dict:
     return {"month": u.get("month", ""), **{k: {"used": u.get(k, 0), "limit": v} for k, v in MONTHLY_LIMIT.items()}}
 
 
-def _get(url: str, kind: str, raw: bool = False, body: dict | None = None):
+def _get(url: str, kind: str, raw: bool = False, body: dict | None = None, timeout: float | None = None):
     _use(kind)
     if body is None:
         req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
@@ -95,7 +95,7 @@ def _get(url: str, kind: str, raw: bool = False, body: dict | None = None):
         req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={"User-Agent": UA, "Accept": "*/*", "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=CFG["HTTP_TIMEOUT"]) as r:
+        with urllib.request.urlopen(req, timeout=timeout or CFG["HTTP_TIMEOUT"]) as r:
             data = r.read()
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
@@ -290,7 +290,7 @@ def flow_tile(z: int, x: int, y: int) -> bytes:
             return hit[1]
     url = FLOW_TILE_URL.format(z=z, x=x, y=y) + "?" + urllib.parse.urlencode(
         {"key": _key(), "thickness": 8, "tileSize": 256})
-    data = _get(url, "tile", raw=True)
+    data = _get(url, "tile", raw=True, timeout=8)      # ภาพจราจรช้า -> ตัดที่ 8 วิ ไม่ให้กิน thread นาน
     with _lock:
         _tile_cache[ck] = (time.time(), data)
         if len(_tile_cache) > _TILE_MAX:

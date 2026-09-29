@@ -295,3 +295,6 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .leaflet-popup-content .tr-item .big:not([style]){color:#fff}
 .leaflet-popup-content .tr-item .route,.leaflet-popup-content .tr-item .route b{color:#fff}
 .leaflet-popup-content .tr-item .muted,.leaflet-popup-content .tr-item .tag{color:#e2e8f0}
+/* ตารางระดับน้ำเจ้าพระยา: หัวคอลัมน์กับตัวเลขจัดกึ่งกลางให้ตรงกัน */
+.rv-lvl th.num,.rv-lvl td.num{text-align:center;white-space:nowrap}
+.rv-lvl td:last-child,.rv-lvl th:last-child{text-align:center;white-space:nowrap}

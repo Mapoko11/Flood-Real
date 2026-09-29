@@ -310,7 +310,7 @@ def main() -> int:
     try:
         from waitress import serve     # server สำหรับใช้งานจริง รองรับหลายคนพร้อมกัน
         print("  server   : waitress")
-        serve(app, host=host, port=port, threads=8, ident="FloodReal")
+        serve(app, host=host, port=port, threads=24, ident="FloodReal")   # 24: ภาพจราจรหลายสิบภาพพร้อมกันไม่ทำให้ /health ค้าง
     except ImportError:
         print("  server   : Flask (ยังไม่ได้ติดตั้ง waitress)")
         app.run(host=host, port=port, debug=False, use_reloader=False)

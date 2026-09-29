@@ -174,7 +174,7 @@ function rvLevelTable(ch) {
   }).join("");
   return `<h3 class="rv-h3">📏 ระดับน้ำแม่น้ำเจ้าพระยา (เหนือ → ใต้)</h3>
     <div class="note" style="margin-bottom:6px">🕒 ระบบดึงข้อมูลล่าสุด <b>${esc(upd || "–")}</b> น. · ดึงใหม่ทุก ~15 นาที · เวลาวัดของแต่ละสถานีอยู่คอลัมน์ขวาสุด (⚠ = ค่าเก่ากว่า 3 ชม.)</div>
-    <div class="table-wrap"><table><thead><tr><th>สถานี</th><th class="num">ระดับน้ำ<br><small>ม.รทก.</small></th><th class="num">ระดับตลิ่ง<br><small>ม.รทก.</small></th>
+    <div class="table-wrap"><table class="rv-lvl"><thead><tr><th>สถานี</th><th class="num">ระดับน้ำ<br><small>ม.รทก.</small></th><th class="num">ระดับตลิ่ง<br><small>ม.รทก.</small></th>
       <th class="num">ต่ำกว่าตลิ่ง<br><small>ม.</small></th><th class="num">% ตลิ่ง</th><th class="num">เปลี่ยน<br><small>ซม.</small></th><th>เวลาวัด</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="muted" style="font-size:12px;margin-top:4px">ม.รทก. = เมตรจากระดับน้ำทะเลปานกลาง · "เปลี่ยน" เทียบกับค่าวัดครั้งก่อนของสถานี · ข้อมูล ThaiWater</div>`;
