@@ -7,6 +7,12 @@
 
 /* สถานีตามลำดับ เหนือ -> ใต้ (id ของ ThaiWater) — สถานีที่ไม่มีในข้อมูลรอบนั้นจะถูกข้ามเอง */
 const RV_CHAIN = ["568", "2795", "584", "83", "80", "2744", "89", "71", "2723", "68", "2626", "58", "39", "49", "26", "2599", "4"];
+/* แม่น้ำวัง/ยม: ไม่มีเขื่อนใหญ่ในรายการ ใช้ "สถานีปลายน้ำ" แทน (id ThaiWater) + เขื่อนบนสายวัง */
+const RV_UP = {
+  "วัง": {st: "3018", label: "แม่น้ำวัง", dams: ["กิ่วลม", "กิ่วคอหมา"]},     // บ้านวังหมัน ตาก (ใกล้จุดรวมกับแม่น้ำปิง)
+  "ยม": {st: "2851", label: "แม่น้ำยม", dams: []},                          // หน้าอำเภอโพทะเล พิจิตร (ปลายน้ำก่อนรวมน่าน)
+};
+const rvUpSt = key => { const c = RV_UP[key]; return c ? (((DATA && DATA.waterlevel) || []).find(w => String(w.id) === c.st) || null) : null; };
 const RV_MOUTH = {lat: 13.52, lon: 100.59, name: "ปากแม่น้ำ · อ่าวไทย"};
 /* ทางน้ำจากเขื่อนที่เข้ามารวม: ชื่อเขื่อน -> สถานีที่ไปรวม (เส้นประ = ไม่ใช่แนวแม่น้ำจริง) */
 const RV_TRIBS = [
@@ -103,12 +109,13 @@ function rvSvg(ch) {
   /* ต้นน้ำ: ปิง วัง ยม น่าน */
   const topN = [{x: 55, lab: "ปิง", key: "ภูมิพล"}, {x: 130, lab: "วัง", key: null}, {x: 205, lab: "ยม", key: null}, {x: 280, lab: "น่าน", key: "สิริกิติ์"}];
   topN.forEach((t, i) => {
-    const dm = t.key ? dams.find(d => d.t.key === t.key) : null, st = dm ? damSt(dm.d) : RV_ST.none;
+    const dm = t.key ? dams.find(d => d.t.key === t.key) : null, us = rvUpSt(t.lab);
+    const st = dm ? damSt(dm.d) : us ? rvState(us) : RV_ST.none;
     o += `<path d="M${t.x} 66 L${t.x} 100 L${X} ${yOf(0) - 16}" fill="none" stroke="#38bdf8" stroke-width="3.5" stroke-dasharray="7 7" class="rv-march" opacity=".75"/>`;
     o += mv(t.x, 84, 0, "#38bdf8", i * 0.25, 22);
     o += node(t.x, 36, st, 8);
     o += `<text x="${t.x}" y="16" text-anchor="middle" class="rv-t">${t.lab}</text>`;
-    o += `<text x="${t.x}" y="58" text-anchor="middle" class="rv-m">${dm && dm.d.pct != null ? "เขื่อน " + fmt(dm.d.pct, 0) + "%" : "ไม่มีข้อมูล"}</text>`;
+    o += `<text x="${t.x}" y="58" text-anchor="middle" class="rv-m">${dm && dm.d.pct != null ? "เขื่อน " + fmt(dm.d.pct, 0) + "%" : us && us.bank_pct != null ? esc(us.province) + " " + fmt(us.bank_pct, 0) + "%" : "ไม่มีข้อมูล"}</text>`;
   });
   /* ลำน้ำหลัก: ท่อน้ำโปร่ง + เส้นสีสถานะ + ลูกศรวิ่ง */
   o += `<line x1="${X}" y1="${yOf(0)}" x2="${X}" y2="${yOf(keys.length - 1) + 70}" stroke="url(#rvCh)" stroke-width="26" stroke-linecap="round"/>`;
@@ -157,6 +164,13 @@ function rvRender() {
   const cd = idx("2744"), bk = idx("4");
   const eta = (cd >= 0 && bk > cd) ? (ch[bk].hrs - ch[cd].hrs) : null;
 
+  const upCards = Object.entries(RV_UP).map(([k, c]) => {
+    const us = rvUpSt(k); if (!us) return "";
+    const dd = (((DATA && DATA.main) || {}).dams || []).filter(d => c.dams.some(n => (d.name || "").includes(n)));
+    return `<div class="rv-dam"><div class="t"><b>${c.label}</b>${rvPill(us)}</div>
+      <div class="sub">สถานีปลายน้ำ: ${esc(us.name)} ${esc(us.province || "")} · ${us.bank_pct == null ? "–" : fmt(us.bank_pct, 0) + "% ของตลิ่ง"}${us.wl_msl == null ? "" : " · " + fmt(us.wl_msl, 2) + " ม.รทก."}</div>
+      ${dd.length ? `<div class="sub">เขื่อนบนสาย: ${dd.map(d => esc(d.name) + " " + fmt(d.pct, 0) + "%").join(" · ")}</div>` : ""}</div>`;
+  }).join("");
   const damCards = dams.map(({t, d}) => `<div class="rv-dam">
       <div class="t"><b>${esc(d.name)}</b>${pill(DAM, d.level)}</div>
       <div class="sub">${esc(t.label)} · น้ำในอ่าง ${fmt(d.pct, 0)}% · ไหลเข้า ${fmt(d.inflow, 2)} · ระบาย ${fmt(d.released, 2)} ล้าน ลบ.ม./วัน</div>
@@ -190,7 +204,7 @@ function rvRender() {
     <h3 class="rv-h3">แผนภาพสายน้ำ · ลูกศร = ทิศน้ำไหล (สี = ระดับน้ำ)</h3>
     <div class="rv-svgbox">${rvSvg(ch)}</div>
     <h3 class="rv-h3">ต้นน้ำ · เขื่อน</h3>
-    <div class="rv-dams">${damCards || '<div class="muted">ไม่มีข้อมูลเขื่อนต้นน้ำรอบนี้</div>'}</div>
+    <div class="rv-dams">${damCards}${upCards}${damCards || upCards ? "" : '<div class="muted">ไม่มีข้อมูลเขื่อนต้นน้ำรอบนี้</div>'}</div>
     <h3 class="rv-h3">ไหลลงมาตามลำดับ (เหนือ → ใต้)</h3>
     <div class="rv-flow">${rows}
       <div class="rv-row"><div class="rv-rail"><span class="rv-dot" style="background:#0ea5e9"></span></div>
