@@ -21,6 +21,7 @@ if key:
     CFG["GISTDA_API_KEY"] = key
 EVERY = os.environ.get("SITE_EVERY_MINUTES", "30")
 
+sources.CCTV_HEALTH_SYNC = True   # ตรวจกล้องเสียให้เสร็จระหว่าง build (วันละครั้ง)
 import app as webapp  # noqa: E402  (import หลังตั้ง key)
 
 SITE = os.path.join(ROOT, "site")

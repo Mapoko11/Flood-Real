@@ -110,11 +110,20 @@ async function load(){
   try{
     const r = await fetch(API.data(), {cache:"no-store"});
     DATA = await r.json();
+    camApplyHide();
     renderAll();
     loadTraffySplit();
   }catch(e){
     $("#updated").textContent = "โหลดข้อมูลไม่ได้: " + e.message;
   }
+}
+
+/* กล้องที่ตรวจแล้วว่าเสีย (c.bad จากระบบตรวจวันละครั้ง) -> ซ่อนไว้ทุกที่ ยกเว้นติ๊ก "แสดงกล้องที่เสียด้วย" */
+function camApplyHide(){
+  const c = DATA && DATA.cctv; if(!c || !c.cams) return;
+  if(!c._all) c._all = c.cams;
+  const showBad = $("#camBad") && $("#camBad").checked;
+  c.cams = showBad ? c._all : c._all.filter(x=>!x.bad);
 }
 
 /* เว็บ static: Traffy แยกไฟล์ (data/traffy.json) โหลดตามหลัง เพื่อให้แผนที่ขึ้นเร็วขึ้น */
@@ -398,7 +407,8 @@ function renderCam(){
   const key = prov + "|" + show.map(c=>c.id).join(",") + "|" + ((DATA.cctv||{}).at||"");
   if(key === renderCam.last) return;   // ข้อมูลรีเฟรชทุกนาที: ถ้ารายการเดิม ไม่วาดใหม่ (ภาพ/วิดีโอที่เปิดอยู่ไม่หาย)
   renderCam.last = key; camStop();
-  $("#camInfo").textContent = `พบ ${list.length} กล้อง` + (list.length>show.length ? ` (แสดง ${show.length} ตัวแรก พิมพ์ค้นให้แคบลง)` : "");
+  const hid = ((DATA.cctv||{})._all||[]).length - all.length;
+  $("#camInfo").textContent = (hid>0 ? `ซ่อนกล้องที่เสีย ${hid} ตัว · ` : "") + `พบ ${list.length} กล้อง` + (list.length>show.length ? ` (แสดง ${show.length} ตัวแรก พิมพ์ค้นให้แคบลง)` : "");
   grid.innerHTML = show.map((c,i)=>`<div class="cam-card" data-i="${i}">
       <div class="cam-view">${c.img?`<img loading="lazy" referrerpolicy="no-referrer" alt="" src="${safeUrl(c.img)}">`:`<div class="cam-msg">มีแต่วิดีโอ</div>`}</div>
       <div class="cam-t">${esc(c.name.replace(/^\([^)]*\)\s*/,""))}</div>
@@ -1489,6 +1499,7 @@ let bmaQT=null; $("#bmaQ").addEventListener("input", ()=>{ clearTimeout(bmaQT); 
 $("#bmaCmp").addEventListener("change", renderBma);
 let camT=null; $("#camQ").addEventListener("input", ()=>{ clearTimeout(camT); camT=setTimeout(renderCam, 350); });
 $("#camProv").addEventListener("change", renderCam); $("#camLive").addEventListener("change", renderCam);
+$("#camBad").addEventListener("change", ()=>{ camApplyHide(); renderCam.last=""; renderCam(); try{ renderMap(); }catch(e){} });
 $("#onlyRisk").addEventListener("change", renderMap);
 if(STATIC){ $("#btnRefresh").style.display="none"; }
 $("#btnRefresh").addEventListener("click", async ()=>{

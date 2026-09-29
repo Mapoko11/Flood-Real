@@ -268,3 +268,86 @@ def periodic_summary(data: dict) -> str:
         json.dump({"slot": slot}, f)
     os.replace(tmp, SUMMARY_STATE)
     return "sent-now"
+
+
+# ============================================================
+#  เตือนรถติดตอนเย็น (จันทร์–ศุกร์) — ภาพรวมถนนหลักใน กทม. + ถนนน้ำท่วม
+#  ใช้โควตา TomTom incident ~1 ครั้งต่อถนน ต่อวัน (10 ถนน x 22 วัน ~ 220 จาก 2,250/เดือน)
+# ============================================================
+EVENING_STATE = os.path.join(DATA_DIR, "evening_state.json")
+
+
+def build_evening_jam(data: dict) -> str:
+    import traffic
+    roads = [str(r) for r in (CFG.get("EVENING_JAM_ROADS") or []) if str(r).strip()]
+    lines, checked, failed = [], 0, 0
+    for name in roads:
+        try:
+            res = traffic.search(name)
+        except Exception:  # noqa: BLE001 - ถนนไหนตรวจไม่ได้ ข้ามไป
+            failed += 1
+            continue
+        checked += 1
+        its = [i for i in (res.get("items") or []) if i.get("on_road") and (i.get("magnitude", 0) >= 2 or i.get("cat") == 8)]
+        if not its:
+            continue
+        worst = max(its, key=lambda i: (i.get("magnitude", 0), i.get("length_km", 0)))
+        tot = sum(i.get("length_km", 0) for i in its)
+        mx_delay = max(i.get("delay_min", 0) for i in its)
+        icon = "🔴" if worst.get("magnitude", 0) >= 3 else "🟠"
+        seg = f" ({worst.get('tail') or '?'} → {worst.get('head') or '?'})" if (worst.get("tail") or worst.get("head")) else ""
+        lines.append((worst.get("magnitude", 0), tot,
+                      f"{icon} {name}: {len(its)} จุด รวม {tot:.1f} กม. · {worst.get('magnitude_text') or 'ติด'}"
+                      f" · หน่วงสูงสุด ~{mx_delay:.0f} นาที{seg}"))
+    lines.sort(key=lambda t: (-t[0], -t[1]))
+    out = []
+    if lines:
+        out.append(f"🚗 ถนนที่ติดหนัก/ปานกลาง ({len(lines)} จาก {checked} สายที่ตรวจ):")
+        out += [t[2] for t in lines]
+    elif checked:
+        out.append(f"✅ ไม่พบรถติดหนักบนถนนหลัก {checked} สายที่ตรวจ")
+    else:
+        out.append("ตรวจถนนไม่ได้ในรอบนี้ (TomTom ไม่ตอบ หรือโควตาหมด)")
+    if failed and checked:
+        out.append(f"(ตรวจไม่ได้ {failed} สาย)")
+    bma = data.get("bma") or {}
+    if bma.get("points") is not None:
+        fl = [p for p in bma["points"] if p.get("state") in ("flood", "minor")]
+        out.append(f"🌧️ ถนน กทม. น้ำท่วม/ท่วมขัง: {len(fl)} จุด")
+        for p in sorted(fl, key=lambda p: -(p.get("cm") or 0))[:5]:
+            out.append(f"   • {p.get('name')} {_fmt(p.get('cm'), 0)} ซม.")
+    out.append("ดูเว็บ: https://mapoko11.github.io/Flood-Real/ (แท็บ รถติด)")
+    return "\n".join(out)
+
+
+def evening_jam(data: dict) -> str:
+    """เรียกทุกรอบ worker — จันทร์–ศุกร์ เมื่อถึง EVENING_JAM_HOUR ส่งวันละครั้ง (ทำงานเบื้องหลัง ไม่หน่วงรอบดึงข้อมูล)"""
+    if not CFG.get("EVENING_JAM_ENABLED", True):
+        return "off"
+    now = datetime.now()
+    if now.weekday() > 4 or now.hour != int(CFG.get("EVENING_JAM_HOUR", 17)):
+        return "not-time"
+    slot = now.strftime("%Y-%m-%d")
+    try:
+        with open(EVENING_STATE, "r", encoding="utf-8") as f:
+            if json.load(f).get("slot") == slot:
+                return "sent"
+    except (OSError, ValueError):
+        pass
+    b = get_bus()
+    if b is None:
+        return "no-bus"
+    tmp = EVENING_STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:      # จองสล็อตก่อน กันส่งซ้ำถ้ารอบถัดไปมาเร็ว
+        json.dump({"slot": slot}, f)
+    os.replace(tmp, EVENING_STATE)
+
+    def _job():
+        try:
+            b.report(f"🚗 Flood real รถติดตอนเย็น {datetime.now().strftime('%H:%M')} น.", build_evening_jam(data),
+                     expires_minutes=180)
+        except Exception as e:  # noqa: BLE001
+            print(f"[alerts] evening_jam ล้มเหลว: {e}")
+    import threading
+    threading.Thread(target=_job, name="evening-jam", daemon=True).start()
+    return "sent-now"

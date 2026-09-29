@@ -17,6 +17,7 @@ import math
 import os
 import re
 import xml.etree.ElementTree as ET
+import cam_health
 import threading
 import urllib.error
 import urllib.parse
@@ -1024,6 +1025,7 @@ def fetch_bma_canal() -> dict:
 
 # ---------------------------------------------------------------- กล้อง CCTV (iTIC Foundation / กรมทางหลวง ผ่าน Longdo Traffic)
 CCTV_URL = "https://camera.longdo.com/feed/?command=json"
+CCTV_HEALTH_SYNC = False     # build_static.py ตั้งเป็น True (รอตรวจกล้องให้เสร็จก่อนสร้างเว็บ)
 CCTV_EVERY_MINUTES = 60      # รายชื่อกล้องแทบไม่เปลี่ยน ดึงชั่วโมงละครั้งพอ (ภาพจริงเบราว์เซอร์โหลดจากต้นทางเอง)
 
 
@@ -1058,7 +1060,19 @@ def fetch_cctv() -> dict:
         })
     if not cams:
         raise ValueError("ไม่มีกล้องในฟีด")
+    # ตรวจกล้องเสียวันละครั้ง: เว็บ static (GitHub) ตรวจทันทีระหว่าง build, เซิร์ฟเวอร์ในเครื่องตรวจเบื้องหลัง
+    health = cam_health.load() or (old.get("health") or {})
+    if cam_health.due(health):
+        if CCTV_HEALTH_SYNC:
+            health = cam_health.run(cams)
+        else:
+            cam_health.run_background(cams)
+    bad = set(health.get("bad") or [])
+    for c in cams:
+        if c["id"] in bad:
+            c["bad"] = True
     return {"configured": True, "at": _now(), "cams": cams, "count": len(cams),
+            "health": {"at": health.get("at"), "checked": health.get("checked"), "bad": sorted(bad)},
             "source": "https://traffic.longdo.com/cameralist"}
 
 

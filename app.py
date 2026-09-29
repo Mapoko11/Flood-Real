@@ -43,6 +43,10 @@ def _cycle() -> dict:
         _worker_state["summary"] = alerts.periodic_summary(data)
     except Exception as e:  # noqa: BLE001
         _worker_state["summary"] = f"error: {e}"
+    try:
+        _worker_state["evening_jam"] = alerts.evening_jam(data)
+    except Exception as e:  # noqa: BLE001
+        _worker_state["evening_jam"] = f"error: {e}"
     _worker_state["last_run"] = data.get("updated_at", "")
     return data
 
