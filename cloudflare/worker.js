@@ -197,22 +197,33 @@ async function search(env, qRaw) {
   if (q.length < 2 || q.length > 80) throw new TrafficError("พิมพ์ชื่อถนน 2–80 ตัวอักษร");
   await spend(env, "traffic");
   const [qc, hint] = splitParen(q);
-  const ld = await longdo(env, qc, null, hint);
-  const res = ld.length ? [] : await lookup(env, (qc + " " + hint).trim());
-  if (!res.length && !ld.length) throw new TrafficError(`ไม่พบถนน/สถานที่ชื่อ “${q}”`);
+  const isJn = qc.startsWith("แยก");
+  const osm = isJn ? await osmJunction(env, qc, null) : null;      // ชื่อ "แยก…" ใช้จุดจาก OSM ก่อน
+  const ld = osm ? [] : await longdo(env, qc, null, hint);
+  const res = (osm || ld.length) ? [] : await lookup(env, (qc + " " + hint).trim());
+  if (!res.length && !ld.length && !osm) throw new TrafficError(`ไม่พบถนน/สถานที่ชื่อ “${q}”`);
   let road, tl, br;
-  if (ld.length) {
+  const around = (lat, lon, dl) => { tl = { lat: lat + dl, lon: lon - dl }; br = { lat: lat - dl, lon: lon + dl }; };
+  if (osm) {
+    road = { name: qc, area: "ตำแหน่งจาก OSM", type: "ทางแยก", lat: osm.lat, lon: osm.lon };
+    around(osm.lat, osm.lon, 0.011);
+  } else if (ld.length) {
     const d = ld[0];
-    road = { name: d.name, area: d.area || "", type: "POI", lat: d.lat, lon: d.lon };
-    tl = { lat: d.lat + 0.011, lon: d.lon - 0.012 }; br = { lat: d.lat - 0.011, lon: d.lon + 0.012 };
+    road = { name: d.name, area: (d.area ? d.area + " · " : "") + "ตำแหน่งจาก Longdo", type: "POI", lat: d.lat, lon: d.lon };
+    around(d.lat, d.lon, 0.011);
   } else {
-    res.sort((a, b) => (a.type === "Street" ? 0 : 1) - (b.type === "Street" ? 0 : 1));
+    const nq = normTh(qc);
+    const rk = r => {
+      const a = r.address || {}, nm = normTh((r.poi || {}).name || a.streetName || ""), hit = nq && nm.includes(nq) ? 0 : 1;
+      return isJn ? [hit, r.type === "Cross Street" ? 0 : 1] : [r.type === "Street" ? 0 : 1, hit];
+    };
+    res.sort((x, y) => { const p = rk(x), q2 = rk(y); return (p[0] - q2[0]) || (p[1] - q2[1]); });
     const r = res[0], a = r.address || {}, vp = r.viewport || {}, pos = r.position || {};
     tl = vp.topLeftPoint; br = vp.btmRightPoint;
-    if (!tl || !br) { tl = { lat: pos.lat + 0.02, lon: pos.lon - 0.02 }; br = { lat: pos.lat - 0.02, lon: pos.lon + 0.02 }; }
+    if (isJn || !tl || !br) around(pos.lat, pos.lon, isJn ? 0.011 : 0.02);
     road = {
       name: a.streetName || (r.poi || {}).name || a.freeformAddress || q,
-      area: [a.municipalitySubdivision, a.municipality, a.countrySubdivision].filter(Boolean).join(", "),
+      area: [a.municipalitySubdivision, a.municipality, a.countrySubdivision].filter(Boolean).join(", ") + " · ตำแหน่งจาก TomTom",
       type: r.type || "", lat: pos.lat, lon: pos.lon,
     };
   }
