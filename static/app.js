@@ -615,9 +615,11 @@ function renderBma(){
   const st = (DATA.status||{}).bma;
   if(b.configured===false){ $("#bmaInfo").textContent="ปิดการดึงข้อมูล กทม. อยู่ (BMA_FLOOD_ENABLED)"; return; }
   if(!b.points){ $("#bmaInfo").textContent = st && !st.ok ? "ยังดึงข้อมูล กทม. ไม่ได้: "+st.error : "ยังไม่มีข้อมูล (รอรอบแรก)"; $("#bmaTable").innerHTML=""; return; }
-  const sel = $("#bmaShow").value, no = bmaNumbers();
+  const bq = ($("#bmaQ").value||"").trim().toLowerCase();
+  const sel = (bq || q()) ? "all" : $("#bmaShow").value, no = bmaNumbers();   // พิมพ์ค้นหา = ค้นทุกจุด (ไม่จำกัดแค่จุดที่ท่วม)
   const df = bmaDiff(Number($("#bmaCmp").value||0));
   const pts = b.points.filter(p=>match(p,["name","road","district"]))
+    .filter(p=> !bq || ["name","road","district"].some(k=>String(p[k]||"").toLowerCase().includes(bq)))
     .filter(p=> sel==="wet" ? (bmaWet(p) || (df && df.d && df.d[p.code])) : sel==="ok" ? (p.state!=="down" && p.state!=="unknown") : true)
     .sort((a,b)=>(no[a.code]||999)-(no[b.code]||999));
   $("#bmaDiff").innerHTML = !df ? "" : !df.at ? `<span class="muted">ยังไม่มีข้อมูลย้อนหลังพอสำหรับช่วงนี้ (ระบบเริ่มเก็บชั่วโมงละครั้งตั้งแต่อัปเดตนี้)</span>` :
@@ -1483,6 +1485,7 @@ function updBack(){ const b=$("#btnBack"); if(b) b.hidden = !savedView; }
 }));
 $("#tfState").addEventListener("change", renderTraffy);
 $("#bmaShow").addEventListener("change", renderBma);
+let bmaQT=null; $("#bmaQ").addEventListener("input", ()=>{ clearTimeout(bmaQT); bmaQT=setTimeout(renderBma, 250); });
 $("#bmaCmp").addEventListener("change", renderBma);
 let camT=null; $("#camQ").addEventListener("input", ()=>{ clearTimeout(camT); camT=setTimeout(renderCam, 350); });
 $("#camProv").addEventListener("change", renderCam); $("#camLive").addEventListener("change", renderCam);

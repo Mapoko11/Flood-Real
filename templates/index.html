@@ -19,7 +19,7 @@
     </div>
   </div>
   <div class="top-right">
-    <input id="q" type="search" placeholder="ค้นจังหวัด / สถานี / เขื่อน…" autocomplete="off">
+    <input id="q" type="search" placeholder="ค้นจังหวัด / สถานี / ถนน / เขต…" autocomplete="off">
     <button id="btnRefresh" class="btn">ดึงข้อมูลใหม่</button>
     <span id="updated" class="muted">กำลังโหลด…</span>
     <span id="visits" class="muted visits" hidden></span>
@@ -133,6 +133,7 @@
         <option value="0">ไม่เทียบ</option><option value="1">เทียบ 1 ชม.ก่อน</option><option value="3">เทียบ 3 ชม.ก่อน</option>
         <option value="6">เทียบ 6 ชม.ก่อน</option><option value="24" selected>เทียบเมื่อวานเวลานี้</option>
       </select>
+      <input type="search" id="bmaQ" placeholder="ค้นถนน / จุดวัด / เขต เช่น เอกชัย, บางเขน" maxlength="60" autocomplete="off" style="min-width:240px">
       <span id="bmaInfo" class="muted"></span>
     </div>
     <div id="bmaDiff" class="bma-diff"></div>
