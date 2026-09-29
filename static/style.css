@@ -298,3 +298,5 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 /* ตารางระดับน้ำเจ้าพระยา: หัวคอลัมน์กับตัวเลขจัดกึ่งกลางให้ตรงกัน */
 .rv-lvl th.num,.rv-lvl td.num{text-align:center;white-space:nowrap}
 .rv-lvl td:last-child,.rv-lvl th:last-child{text-align:center;white-space:nowrap}
+
+#bmaTable th.c,#bmaTable td.c{text-align:center;white-space:nowrap}

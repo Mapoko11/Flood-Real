@@ -625,9 +625,9 @@ function renderBma(){
   const c = b.count||{};
   $("#bmaInfo").innerHTML = bmaStaleNote(b) + `น้ำท่วม <b style="color:${BMA.flood[1]}">${c.flood||0}</b> · ท่วมขังเล็กน้อย <b style="color:${BMA.minor[1]}">${c.minor||0}</b> · ปกติ ${c.normal||0} · ขัดข้อง ${c.down||0} จุด` +
     ` <span class="muted">· ดึงเมื่อ ${esc((b.at||"").replace("T"," "))}${st&&!st.ok?" (รอบล่าสุดดึงไม่ได้ ใช้ข้อมูลเดิม)":""} · <a href="${safeUrl(b.source)}" target="_blank" rel="noopener">สำนักการระบายน้ำ กทม.</a></span>`;
-  $("#bmaTable").innerHTML = `<thead><tr><th>#</th><th>จุดวัด</th><th>ถนน</th><th>เขต</th><th class="num">ระดับน้ำ (ซม.)</th><th>สถานะ</th>${df&&df.at?"<th>เทียบ</th>":""}<th>เริ่มท่วม</th><th>เวลาวัด</th></tr></thead><tbody>` +
+  $("#bmaTable").innerHTML = `<thead><tr><th>#</th><th>จุดวัด</th><th>ถนน</th><th>เขต</th><th class="c">ระดับน้ำ (ซม.)</th><th class="c">สถานะ</th>${df&&df.at?"<th class=\"c\">เทียบ</th>":""}<th class="c">เริ่มท่วม</th><th class="c">เวลาวัด</th></tr></thead><tbody>` +
     (pts.length ? pts.map((p,i)=>`<tr class="bma-row" data-i="${i}"><td>${no[p.code]?`<span class="bma-no" style="background:${bmaColor(p)}">${no[p.code]}</span>`:""}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.road)}</td><td>${esc(p.district)}</td>
-      <td class="num"><b>${fmt(p.cm,1)}</b></td><td>${pill(BMA,p.state)}</td>${df&&df.at?`<td>${diffBadge(df.d[p.code])}</td>`:""}<td>${esc((p.since||"").slice(5,16).replace("T"," "))}</td><td>${esc((p.time||"").slice(11,16))}</td></tr>`).join("")
+      <td class="c"><b>${fmt(p.cm,1)}</b></td><td class="c">${pill(BMA,p.state)}</td>${df&&df.at?`<td class="c">${diffBadge(df.d[p.code])}</td>`:""}<td class="c">${esc((p.since||"").slice(5,16).replace("T"," "))}</td><td class="c">${esc((p.time||"").slice(11,16))}</td></tr>`).join("")
       : `<tr><td colspan="9" class="muted">ไม่มีจุดน้ำท่วมถนนตอนนี้ 🎉</td></tr>`) + "</tbody>";
   $("#bmaTable").querySelectorAll(".bma-row").forEach(el=>el.addEventListener("click",()=>{
     const p = pts[Number(el.dataset.i)];
