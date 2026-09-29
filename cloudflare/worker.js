@@ -555,6 +555,14 @@ async function bma(env, ctx, cors, name = "flood") {
   const hit = await caches.default.match(key);
   if (hit) return new Response(hit.body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "X-Bma": "cache" } });
   let body = null, status = "ok";
+  // กันยิงต้นทางถี่ข้ามศูนย์ข้อมูล Cloudflare (cache แยกตามที่ตั้ง): จำเวลาที่ลองครั้งล่าสุดไว้ใน KV
+  try {
+    const last = JSON.parse((await env.COUNTER.get(kvKey + ":try")) || "null");
+    if (last && Date.now() - last.t < (last.ok ? 1200e3 : 1800e3)) {
+      const kb = await env.COUNTER.get(kvKey);
+      if (kb) return new Response(kb, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "X-Bma": last.ok ? "kv" : "stale: รอรอบถัดไป" } });
+    }
+  } catch (e) {}
   try {
     const headers = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
@@ -574,7 +582,8 @@ async function bma(env, ctx, cors, name = "flood") {
     body = await env.COUNTER.get(kvKey);
     if (!body) return json({ ok: false, error: status }, 502, cors);
   }
-  const ttl = status === "ok" ? 600 : 300;   // พังแล้วรอ 5 นาทีค่อยลองต้นทางใหม่
+  ctx.waitUntil(env.COUNTER.put(kvKey + ":try", JSON.stringify({ t: Date.now(), ok: status === "ok" }), { expirationTtl: 86400 }));
+  const ttl = status === "ok" ? 1200 : 1800;   // ได้ผล จำ 20 นาที · พังแล้วรอ 30 นาทีค่อยลองต้นทางใหม่ (กทม. บล็อก IP ที่เรียกถี่)
   ctx.waitUntil(caches.default.put(key, new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${ttl}` } })));
   return new Response(body, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "X-Bma": status } });
 }

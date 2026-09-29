@@ -638,7 +638,7 @@ def fetch_traffy() -> dict:
 # ---------------------------------------------------------------- กทม. น้ำท่วมถนน (สำนักการระบายน้ำ)
 # ต้นทาง: หน้า https://weather.bangkok.go.th/Flood/  (ไม่มี API ทางการ ใช้ endpoint เดียวกับหน้าเว็บ)
 # เซิร์ฟเวอร์ กทม. มีตัวกันยิงถี่ (ตอบ 403) -> ดึงห่างอย่างน้อย BMA_EVERY_MINUTES และยิงครั้งเดียวต่อรอบ
-BMA_EVERY_MINUTES = 10
+BMA_EVERY_MINUTES = 20      # เดิม 10 — กทม. บล็อก IP ที่เรียกถี่ (29 ก.ย.) จึงลดเหลือ 20 นาที
 _BMA_MS = re.compile(r"/Date\((-?\d+)\)/")
 
 
@@ -662,6 +662,35 @@ def _bma_state(txt: str) -> str:
     return "unknown"
 
 
+BMA_STALE_MIN = 60     # เวลาวัดล่าสุดเก่ากว่านี้ = ข้อมูลที่ได้ "ค้าง" (Worker อาจส่งชุดเก่าที่จำไว้เพราะเว็บ กทม. ไม่ตอบ)
+
+
+def _age_min(t: str) -> float | None:
+    """นาทีตั้งแต่เวลา ISO (เวลาเครื่อง) หรือ 'dd/mm/พ.ศ. HH:MM' ถึงตอนนี้"""
+    s = str(t or "").strip()
+    try:
+        if "/" in s:
+            d, hm = (s.split(" ") + ["00:00"])[:2]
+            dd, mm, yy = [int(x) for x in d.split("/")]
+            hh, mi = [int(x) for x in hm.split(":")[:2]]
+            dt = datetime(yy - 543 if yy > 2400 else yy, mm, dd, hh, mi)
+        else:
+            dt = datetime.fromisoformat(s[:19])
+    except Exception:  # noqa: BLE001
+        return None
+    return (datetime.now() - dt).total_seconds() / 60
+
+
+def _newest(times) -> tuple[str, float | None]:
+    """(เวลาใหม่สุด, อายุเป็นนาที) จากรายการเวลา"""
+    best, age = "", None
+    for t in times:
+        a = _age_min(t)
+        if a is not None and (age is None or a < age):
+            best, age = t, a
+    return best, age
+
+
 def fetch_bma() -> dict:
     """จุดวัดน้ำท่วมถนน กทม. (ระดับน้ำบนผิวถนน หน่วย ซม.)"""
     if not CFG.get("BMA_FLOOD_ENABLED", True):
@@ -677,6 +706,26 @@ def fetch_bma() -> dict:
             js, via = _get_json(proxy), "proxy"
         except Exception as e:  # noqa: BLE001
             errs.append(f"proxy {type(e).__name__}: {e}"[:120])
+    if js is not None:     # Worker ส่งชุดเก่า (เว็บ กทม. ไม่ตอบ Worker) -> ลองดึงตรงจากเครื่องนี้อีกทาง
+        rows0 = js.get("dtTbl") if isinstance(js, dict) else None
+        _, a0 = _newest(_bma_time(r.get("site_timestamp")) for r in (rows0 or []) if isinstance(r, dict))
+        if a0 is not None and a0 > BMA_STALE_MIN:
+            try:
+                js2 = _get_json(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/140.0 Safari/537.36 FloodReal/1.0",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://weather.bangkok.go.th/Flood/",
+            })
+                rows2 = js2.get("dtTbl") if isinstance(js2, dict) else None
+                _, a2 = _newest(_bma_time(r.get("site_timestamp")) for r in (rows2 or []) if isinstance(r, dict))
+                if a2 is not None and a2 < a0:
+                    js, via = js2, "direct (ตัวกลางส่งข้อมูลเก่า)"
+                else:
+                    via = "proxy (ต้นทางเก่า ดึงตรงก็เก่า)"
+            except Exception as e:  # noqa: BLE001
+                via = f"proxy (ข้อมูลเก่า · ดึงตรงไม่ได้: {type(e).__name__})"[:80]
     if js is None:
         try:
             js, via = _get_json(url, headers={
@@ -718,8 +767,10 @@ def fetch_bma() -> dict:
     order = {"flood": 0, "minor": 1, "normal": 2, "unknown": 3, "down": 4}
     pts.sort(key=lambda p: (order.get(p["state"], 9), -(p["cm"] or 0)))
     count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
+    nt, na = _newest(p["time"] for p in pts)
     return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
             "hist": _bma_hist(old.get("hist"), pts),
+            "newest": nt, "stale_min": round(na) if (na is not None and na > BMA_STALE_MIN) else 0,
             "source": "https://weather.bangkok.go.th/Flood/"}
 
 
@@ -891,6 +942,21 @@ def fetch_bma_canal() -> dict:
             rows, via = _get_json(proxy.rstrip("/") + "-canal"), "proxy"
         except Exception as e:  # noqa: BLE001
             errs.append(f"proxy {type(e).__name__}: {e}"[:120])
+    if isinstance(rows, list):     # Worker ส่งชุดเก่า -> ลองดึงตรงจากเครื่องนี้อีกทาง
+        _, a0 = _newest(str(r.get("site_timestampTH") or "") for r in rows if isinstance(r, dict))
+        if a0 is not None and a0 > BMA_STALE_MIN:
+            try:
+                rows2 = _post_form_json("https://weather.bangkok.go.th/water/PageMap/GoogleMap",
+                                        {"payload": "TEST_DATA_GOES_HERE"}, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0 Safari/537.36 FloodReal/1.0",
+                    "X-Requested-With": "XMLHttpRequest", "Referer": "https://weather.bangkok.go.th/water/"})
+                _, a2 = _newest(str(r.get("site_timestampTH") or "") for r in (rows2 if isinstance(rows2, list) else []) if isinstance(r, dict))
+                if a2 is not None and a2 < a0:
+                    rows, via = rows2, "direct (ตัวกลางส่งข้อมูลเก่า)"
+                else:
+                    via = "proxy (ต้นทางเก่า ดึงตรงก็เก่า)"
+            except Exception as e:  # noqa: BLE001
+                via = f"proxy (ข้อมูลเก่า · ดึงตรงไม่ได้: {type(e).__name__})"[:80]
     if rows is None:
         try:
             rows, via = _post_form_json("https://weather.bangkok.go.th/water/PageMap/GoogleMap",
@@ -929,7 +995,9 @@ def fetch_bma_canal() -> dict:
     order = {"critical": 0, "warning": 1, "normal": 2, "down": 3}
     pts.sort(key=lambda p: (order.get(p["state"], 9), p["name"]))
     count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
+    nt, na = _newest(p["time"] for p in pts)
     return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
+            "newest": nt, "stale_min": round(na) if (na is not None and na > BMA_STALE_MIN) else 0,
             "source": "https://weather.bangkok.go.th/water"}
 
 
