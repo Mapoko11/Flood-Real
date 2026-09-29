@@ -19,7 +19,7 @@ import sources
 import traffic
 from config import CFG
 
-VERSION = "1.19.3"
+VERSION = "1.19.5"
 app = Flask(__name__)
 app.json.ensure_ascii = False
 

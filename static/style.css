@@ -270,8 +270,8 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 
 /* ---- แอนิเมชันสายน้ำ ---- */
 @keyframes rvmv{0%{transform:translateY(calc(var(--d,26px) * -.5));opacity:0}18%{opacity:1}82%{opacity:1}100%{transform:translateY(calc(var(--d,26px) * .5));opacity:0}}
-@keyframes rvpulse{0%{transform:scale(1);opacity:.55}100%{transform:scale(3);opacity:0}}
-@keyframes rvblink{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes rvpulse{0%{transform:scale(1);opacity:.75}100%{transform:scale(3.4);opacity:0}}
+@keyframes rvblink{0%,100%{opacity:1}50%{opacity:.15}}
 @keyframes rvmarch{to{stroke-dashoffset:-28}}
 @keyframes rvmmv{0%{transform:translateY(9px);opacity:0}20%{opacity:1}80%{opacity:1}100%{transform:translateY(-9px);opacity:0}}
 .rv-svg .rv-mv{animation:rvmv 1.8s linear infinite}
@@ -289,4 +289,4 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .rv-pd b{position:absolute;inset:6px;border-radius:50%;background:var(--c);opacity:0}
 .rv-pd.on i{animation:rvblink var(--t) ease-in-out infinite}
 .rv-pd.on b{animation:rvpulse var(--t) ease-out infinite}
-@media (prefers-reduced-motion:reduce){.rv-svg *,.rv-dot,.rv-pd *,.rv-mmv{animation:none!important}}
+/* หมายเหตุ: ไม่ปิดแอนิเมชันตาม prefers-reduced-motion เพราะ Windows ที่ปิด "แสดงภาพเคลื่อนไหว" จะทำให้ไม่เห็นจุดกะพริบ/ลูกศรวิ่งเลย */

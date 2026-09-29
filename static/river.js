@@ -15,7 +15,11 @@ const RV_TRIBS = [
   {key: "ป่าสักชลสิทธิ์", label: "แม่น้ำป่าสัก", to: "39"},
 ];
 const RV_SINU = 1.25;                // ความคดเคี้ยวของแม่น้ำเทียบเส้นตรง (ประมาณ)
-let rvSpeed = 3;                     // ความเร็วคลื่นน้ำ กม./ชม. (ประมาณ ปรับได้ในแท็บ)
+let rvSpeed = 4;                     // ความเร็วคลื่นน้ำ กม./ชม. ใช้เฉพาะช่วงเหนือเขื่อนเจ้าพระยา (ประมาณ ≈ 139 กม. ใน ~32 ชม.)
+/* เวลาน้ำเดินทางจาก "ท้ายเขื่อนเจ้าพระยา" (ชัยนาท) — อ้างอิง Spring News (ชัยนาท→สิงห์บุรี ~10 ชม., →อ่างทอง ~8, →อยุธยา ~6, →ปทุมธานี ~8, →นนทบุรี/กรุงเทพฯ ~24)
+   ผูกกับสถานี: id -> ชม. สะสม · ระหว่างสถานีที่ผูกไว้ประมาณเชิงเส้นตามระยะ */
+const RV_ANCHORS = {"2744": 0, "68": 10, "58": 18, "39": 24, "4": 56};
+const RV_REF = "Spring News";
 let rvChain = [];                    // [{st, km, hrs}] หลังคำนวณ
 
 const rvKm = (a, b, c, d) => {
@@ -53,8 +57,18 @@ function rvBuild() {
   let km = 0;
   rvChain = sts.map((s, i) => {
     if (i) km += rvKm(sts[i - 1].lat, sts[i - 1].lon, s.lat, s.lon) * RV_SINU;
-    return {st: s, km, hrs: km / rvSpeed};
+    return {st: s, km, hrs: 0};
   });
+  const anc = rvChain.map((x, i) => [i, RV_ANCHORS[String(x.st.id)]]).filter(a => a[1] !== undefined);   // [index, ชม.จากเขื่อน]
+  if (anc.length >= 2) {
+    const d0 = rvChain[anc[0][0]].km, base = d0 / rvSpeed;       // ชม. จากปากน้ำโพ ถึงเขื่อน
+    rvChain.forEach((x, i) => {
+      if (x.km <= d0) { x.hrs = x.km / rvSpeed; return; }         // เหนือเขื่อน: ระยะ ÷ ความเร็วประมาณ
+      let j = 0; while (j < anc.length - 2 && i > anc[j + 1][0]) j++;
+      const [ia, ha] = anc[j], [ib, hb] = anc[j + 1], ka = rvChain[ia].km, kb = rvChain[ib].km;
+      x.hrs = base + ha + (hb - ha) * (x.km - ka) / Math.max(1, kb - ka);
+    });
+  } else rvChain.forEach(x => { x.hrs = x.km / rvSpeed; });
   return rvChain;
 }
 const rvDams = () => {
@@ -168,11 +182,10 @@ function rvRender() {
   box.innerHTML = `
     <div class="rv-sum">
       <div><span class="muted">จุดน้ำสูงสุดตอนนี้</span><br><b>${esc(top.st.name)}</b> · ${fmt(top.st.bank_pct, 0)}% ของตลิ่ง</div>
-      ${eta != null ? `<div><span class="muted">น้ำจาก ท้ายเขื่อนเจ้าพระยา ถึง สะพานกรุงเทพ</span><br><b>${rvHrsTxt(eta)}</b> <span class="muted">(ประมาณ ที่ ${rvSpeed} กม./ชม.)</span></div>` : ""}
+      ${eta != null ? `<div><span class="muted">น้ำจาก ท้ายเขื่อนเจ้าพระยา ถึง สะพานกรุงเทพ</span><br><b>${rvHrsTxt(eta)}</b> <span class="muted">(ตามตารางอ้างอิง)</span></div>` : ""}
       <div><span class="muted">การอัปเดตข้อมูล</span><br><b>ทุก ~15 นาที</b> <span class="muted">(ระบบดึงจาก ThaiWater ทุก 15 นาที · ${STATIC ? "เว็บนี้สร้างใหม่ทุก ~15 นาที" : "หน้านี้ตรวจข้อมูลใหม่ทุก 1 นาที"})</span><br>
         <span class="muted">ดึงล่าสุด ${esc(((DATA && DATA.updated_at) || "–").replace("T", " "))} · ค่าวัดล่าสุดของสถานี ${esc(rvLatest(ch))}</span></div>
-      <div><span class="muted">ความเร็วคลื่นน้ำที่ใช้คำนวณ</span><br>
-        <select id="rvSpd" aria-label="ความเร็วคลื่นน้ำ">${[2, 3, 4].map(v => `<option value="${v}"${v === rvSpeed ? " selected" : ""}>${v} กม./ชม.${v === 3 ? " (ค่าตั้งต้น)" : ""}</option>`).join("")}</select></div>
+      <div><span class="muted">เวลาน้ำเดินทาง อ้างอิง</span><br><b>${RV_REF}</b> <span class="muted">(ชัยนาท→กรุงเทพฯ ≈ 56 ชม.) · เหนือเขื่อนประมาณ ${rvSpeed} กม./ชม. · เป็นค่าเฉลี่ย ไม่ใช่พยากรณ์</span></div>
     </div>
     <h3 class="rv-h3">แผนภาพสายน้ำ · ลูกศร = ทิศน้ำไหล (สี = ระดับน้ำ)</h3>
     <div class="rv-svgbox">${rvSvg(ch)}</div>
@@ -186,8 +199,6 @@ function rvRender() {
     </div>
     <div class="note" style="margin-top:12px">ข้อควรรู้: เวลาน้ำเดินทางเป็นค่าประมาณจากระยะทางและความเร็วที่เลือก ไม่ใช่การพยากรณ์ทางการ ·
       แนวเส้นบนแผนที่ต่อจากจุดสถานีวัดน้ำ ไม่ใช่แนวตลิ่งจริง · ข้อมูลระดับน้ำ/เขื่อนจาก ThaiWater รอบล่าสุด</div>`;
-  const sp = document.getElementById("rvSpd");
-  if (sp) sp.addEventListener("change", () => { rvSpeed = Number(sp.value) || 3; rvRender(); rvMap(); });
 }
 
 /* ---------------- ชั้นแผนที่ ---------------- */
