@@ -927,7 +927,7 @@ function trMiniShow(draw){
   if(!trMini){
     trMini = L.map("trMap", {zoomControl:true, preferCanvas:true}).setView([13.76,100.55], 12);
     L.tileLayer(ESRI+"World_Street_Map/MapServer/tile/{z}/{y}/{x}", {maxZoom:18, attribution:ATTR + " | จราจร: TomTom"}).addTo(trMini);
-    L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.75, zIndex:300}).addTo(trMini);
+    L.tileLayer(TR_API.tile, {maxZoom:18, opacity:.95, zIndex:300}).addTo(trMini);
     trMiniLy = L.layerGroup().addTo(trMini);
   }
   trMiniLy.clearLayers();
@@ -1241,11 +1241,18 @@ async function trSearch(q){
     const camList = trCamsNear(mine.map(i=>i.line), {maxM:250, limit:12, nameKey:j.road.name, bbox:j.bbox});
     trMiniShow(ly=>{
       trCamMarkers(ly, camList);
-      j.items.forEach(it=>L.polyline(it.line, {color:it.k.color, weight: it.on_road ? 8 : 4, opacity: it.on_road ? .95 : .35, dashArray: it.on_road ? null : "6 6"})
+      j.items.forEach(it=>L.polyline(it.line, {color:it.k.color, weight: it.on_road ? 8 : 6, opacity: it.on_road ? .95 : .85, lineCap:"round"})
         .addTo(ly).bindPopup(trCard(it, 0).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280}));
       const bb = (j.road && j.road.bbox) || j.bbox;   // [minLon,minLat,maxLon,maxLat] (Worker มีแค่ j.bbox)
       const own = mine.flatMap(i=>i.line);
-      return own.length ? L.latLngBounds(own) : (bb && bb.length === 4 ? L.latLngBounds([[bb[1],bb[0]],[bb[3],bb[2]]]) : null);
+      // 📍 หมุดตำแหน่งที่ค้นเจอ (Longdo/OSM/TomTom) — กดดูที่มา + เปิดใน Google Maps
+      const rp = (j.road && typeof j.road.lat === "number" && typeof j.road.lon === "number") ? [j.road.lat, j.road.lon] : null;
+      if(rp) L.marker(rp, {icon: trPin("📍 " + j.road.name, "#8b5cf6"), zIndexOffset: 1000}).addTo(ly)
+        .bindPopup(`<b>${esc(j.road.name)}</b><br>${esc(j.road.area || "")}<br><small class="muted">${rp[0].toFixed(5)}, ${rp[1].toFixed(5)}</small>`
+          + `<br><a href="https://www.google.com/maps?q=${rp[0]},${rp[1]}" target="_blank" rel="noopener">เปิดใน Google Maps</a>`);
+      const bnd = own.length ? L.latLngBounds(own) : (bb && bb.length === 4 ? L.latLngBounds([[bb[1],bb[0]],[bb[3],bb[2]]]) : null);
+      if(bnd && rp) bnd.extend(rp);
+      return bnd || (rp ? L.latLngBounds([rp, rp]).pad(0.01) : null);
     });
     trCamsRender(camList, `ถนน${j.road.name}`, mine.filter(i=>i.k&&i.k.kind==="jam").map(i=>i.line), false);
     trUsage();
