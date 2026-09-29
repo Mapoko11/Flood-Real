@@ -149,33 +149,50 @@ def _lookup(q: str, key: str, bias=None, near_km: float = 150) -> list:
     return pool
 
 
+def _road_at(name, area, typ, lat, lon, src):
+    return {"name": name, "area": (area + " · " if area else "") + "ตำแหน่งจาก " + src, "type": typ, "lat": lat, "lon": lon, "src": src,
+            "bbox": [lon - 0.012, lat - 0.011, lon + 0.012, lat + 0.011]}
+
+
 def _find_road(q: str, key: str) -> dict:
     q0 = q
     m = _PAREN.match(" ".join(str(q or "").split()))
     q, hint = (m.group(1).strip(), m.group(2).strip()) if m and m.group(1).strip() else (q, "")
+    is_jn = q.strip().startswith("แยก")
+    if is_jn:       # ชื่อ "แยก…" ใช้จุดจาก OSM ก่อน (เป็นจุดตัดจริง ไม่ใช่ซอย/สะพานที่ชื่อคล้าย)
+        o = _osm_junction(q, None)
+        if o:
+            return _road_at(q.strip(), "", "ทางแยก", o["lat"], o["lon"], "OSM")
     ld = _longdo(q, None, hint)
-    if ld:      # สถานที่/แยกที่ Longdo รู้จัก -> ใช้ตำแหน่งนั้นเป็นศูนย์กลาง (แม่นกว่า TomTom)
+    if ld:
         d = ld[0]
-        return {"name": d["name"], "area": d.get("area", ""), "type": "POI", "lat": d["lat"], "lon": d["lon"],
-                "bbox": [d["lon"] - 0.012, d["lat"] - 0.011, d["lon"] + 0.012, d["lat"] + 0.011]}
+        return _road_at(d["name"], d.get("area", ""), "POI", d["lat"], d["lon"], "Longdo")
     res = _lookup((q + " " + hint).strip(), key)
     if not res:
         raise TrafficError(f"ไม่พบถนน/สถานที่ชื่อ “{q0}”")
-    # เลือกผลที่เป็นถนนก่อน
-    res.sort(key=lambda r: 0 if r.get("type") == "Street" else 1)
+    nq = _norm(q)
+    def _rk(r):
+        a = r.get("address") or {}
+        nm = _norm((r.get("poi") or {}).get("name") or a.get("streetName") or "")
+        hit = 0 if (nq and nq in nm) else 1           # ชื่อตรงกับที่พิมพ์ก่อน
+        if is_jn:                                      # ค้น "แยก…": ไม่เอาซอย/ถนนที่แค่ชื่อคล้ายมาก่อนจุดที่ชื่อตรง
+            return (hit, 0 if r.get("type") == "Cross Street" else 1)
+        return (0 if r.get("type") == "Street" else 1, hit)
+    res.sort(key=_rk)
     r = res[0]
     a = r.get("address") or {}
     vp = r.get("viewport") or {}
     tl, br = vp.get("topLeftPoint") or {}, vp.get("btmRightPoint") or {}
     pos = r.get("position") or {}
-    if not (tl and br):
-        tl = {"lat": pos.get("lat", 0) + 0.02, "lon": pos.get("lon", 0) - 0.02}
-        br = {"lat": pos.get("lat", 0) - 0.02, "lon": pos.get("lon", 0) + 0.02}
+    if is_jn or not (tl and br):        # ค้นแยก/ไม่มีขอบเขต -> ใช้กรอบเล็กรอบจุด (ไม่ใช้กรอบทั้งซอย/ถนนที่ใหญ่)
+        dl = 0.011 if is_jn else 0.02
+        tl = {"lat": pos.get("lat", 0) + dl, "lon": pos.get("lon", 0) - dl}
+        br = {"lat": pos.get("lat", 0) - dl, "lon": pos.get("lon", 0) + dl}
+    area = ", ".join(x for x in (a.get("municipalitySubdivision"), a.get("municipality"), a.get("countrySubdivision")) if x)
     return {
         "name": a.get("streetName") or r.get("poi", {}).get("name") or a.get("freeformAddress") or q,
-        "area": ", ".join(x for x in (a.get("municipalitySubdivision"), a.get("municipality"),
-                                      a.get("countrySubdivision")) if x),
-        "type": r.get("type", ""),
+        "area": (area + " · " if area else "") + "ตำแหน่งจาก TomTom (Longdo: " + (_LD_STAT["msg"] or "-") + ")",
+        "type": r.get("type", ""), "src": "TomTom",
         "lat": pos.get("lat"), "lon": pos.get("lon"),
         "bbox": [tl["lon"], br["lat"], br["lon"], tl["lat"]],   # minLon,minLat,maxLon,maxLat
     }
@@ -392,16 +409,21 @@ def _osm_junction(q: str, bias=None):
     return hit
 
 
+_LD_STAT = {"msg": ""}      # ผลเรียก Longdo ล่าสุด (ไว้ดูว่าทำไมไม่เจอ)
+
+
 def _longdo(q: str, bias=None, hint: str = "") -> list:
     """ผู้สมัคร (dict name/kind/area/lat/lon) จาก Longdo Map Search — ต้องมี LONGDO_API_KEY ไม่งั้นคืน [] · cache 30 วัน · ล้มเหลวเงียบๆ"""
     k = (CFG.get("LONGDO_API_KEY") or "").strip()
     name = " ".join(str(q or "").split())
     if not k or len(name) < 3:
+        _LD_STAT["msg"] = "ไม่มี key" if not k else "ชื่อสั้นไป"
         return []
     ck = "ld:" + _norm(name) + ("|" + _norm(hint) if hint else "")
     with _osm_lock:
         c = _osm_cache().get(ck)
     if c and time.time() - c.get("t", 0) < (30 if c.get("hit") else 3) * 86400:
+        _LD_STAT["msg"] = "cache"
         return c.get("hit") or []
     b = bias or DEFAULT_BIAS
     qs = urllib.parse.urlencode({"keyword": name, "lon": b[1], "lat": b[0], "span": "40km", "limit": 10, "key": k, "locale": "th"})
@@ -409,7 +431,8 @@ def _longdo(q: str, bias=None, hint: str = "") -> list:
         req = urllib.request.Request("https://search.longdo.com/mapsearch/json/search?" + qs, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=12) as r:
             data = json.loads(r.read().decode("utf-8")).get("data") or []
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        _LD_STAT["msg"] = "เรียกไม่สำเร็จ: " + str(e)[:80]
         return []
     nq, nh = _norm(name), _norm(hint)
     if nh:   # ผลที่ที่อยู่ตรงกับคำในวงเล็บ (เช่น เขต/ย่าน) มาก่อน
@@ -424,6 +447,7 @@ def _longdo(q: str, bias=None, hint: str = "") -> list:
         out.append({"name": nm, "kind": "Longdo", "area": str(d.get("address") or "")[:60], "lat": round(lat, 6), "lon": round(lon, 6)})
         if len(out) >= 3:
             break
+    _LD_STAT["msg"] = f"ได้ {len(data)} รายการ ตรงชื่อ {len(out)}"
     with _osm_lock:
         c = _osm_cache()
         c[ck] = {"t": time.time(), "hit": out}
