@@ -869,20 +869,34 @@ function trPin(txt, bg){ return L.divIcon({className:"", html:`<div class="tr-pi
 const TR_MAG = {0:"ไม่ทราบ",1:"เล็กน้อย",2:"ปานกลาง",3:"ติดหนัก",4:"หยุดนิ่ง"};
 const TR_NEAR_M = 150;
 const TR_CLOSE_RE = /ก่อสร้าง|ซ่อม|งานถนน|ขบวน|พิธี|กิจกรรม|อุบัติเหตุ|ชน|construction|roadworks|event|accident|parade/i;
-function trFloodSpots(){
+/* หลักฐานน้ำท่วม: strong = เซนเซอร์ กทม. หรือรายงานใหม่+มั่นใจ · weak = Floodboard/Traffy ที่เก่า (>2 ชม.) หรือความมั่นใจต่ำ (<0.5) — ไม่ใช้ยืนยัน "ท่วมกี่ ซม." */
+const TR_FRESH_H = 2, TR_CONF_MIN = 0.5;
+function trAgeH(t){ const ms = Date.parse(String(t||"").replace(" ","T")); return isFinite(ms) ? (Date.now()-ms)/3600e3 : 99; }
+/* เซนเซอร์ กทม. ใกล้จุด (<=400 ม.) อ่านค่าล่าสุด (<=60 นาที) ว่าปกติ -> รายงานแจ้งของ Floodboard/Traffy ถือว่ายังไม่ยืนยัน */
+function trSensorSaysDry(la, lo, dry){
+  return dry.some(q=>Math.abs(q.lat-la) < 0.0037 && Math.abs(q.lon-lo) < 0.0037 && trDistM(la, lo, q.lat, q.lon) <= 400);
+}
+function trFloodSpots(weak){
+  const dry = ((DATA&&DATA.bma||{}).points||[]).filter(q=>hasLL(q) && q.state==="normal" && trAgeH(q.time) <= 1);
   const out = [];
-  ((DATA&&DATA.bma||{}).points||[]).filter(p=>hasLL(p) && bmaWet(p) && (p.cm||0) >= 5)
+  if(!weak) ((DATA&&DATA.bma||{}).points||[]).filter(p=>hasLL(p) && bmaWet(p) && (p.cm||0) >= 5)
     .forEach(p=>out.push({lat:p.lat, lon:p.lon, depth:p.cm, src:"เซนเซอร์ กทม.", name:p.name}));
   ((DATA&&DATA.floodboard||{}).features||[]).forEach(f=>{
     const p = f.properties||{};
     if(p.cleared || !(p.closedAll || p.closedSmall || (p.depth||0) >= 5)) return;
     const pts = JSON.stringify(f.geometry.coordinates).match(/-?\d+\.?\d*,-?\d+\.?\d*/g) || [];
+    if(!pts.length) return;
+    const [lo0, la0] = pts[0].split(",").map(Number);
+    const isWeak = trAgeH(p.updated) > TR_FRESH_H || (p.conf != null && p.conf < TR_CONF_MIN) || trSensorSaysDry(la0, lo0, dry);
+    if(isWeak !== !!weak) return;
     pts.forEach(t=>{ const [lo,la]=t.split(",").map(Number); out.push({lat:la, lon:lo, depth:p.depth, src:"Floodboard", name:p.name}); });
   });
-  ((DATA&&DATA.traffy||{}).items||[]).filter(t=>hasLL(t) && tfOpen(t) && (t.types||[]).some(x=>/น้ำท่วม/.test(x)))
+  ((DATA&&DATA.traffy||{}).items||[]).filter(t=>hasLL(t) && tfOpen(t) && (t.types||[]).some(x=>/น้ำท่วม/.test(x)) && (((trAgeH(t.time) > TR_FRESH_H) || trSensorSaysDry(t.lat, t.lon, dry)) === !!weak))
     .forEach(t=>out.push({lat:t.lat, lon:t.lon, depth:null, src:"Traffy แจ้ง", name:t.address||t.district}));
   return out;
 }
+let _trWeak = {d:null, v:[]};
+function trWeakSpots(){ if(_trWeak.d !== DATA){ _trWeak = {d:DATA, v:trFloodSpots(true)}; } return _trWeak.v; }
 function trDistM(a1,o1,a2,o2){ const k=111320; return Math.hypot((o2-o1)*k*Math.cos(a1*Math.PI/180), (a2-a1)*k); }
 function trFloodNear(line, spots){
   if(!line || !line.length || !spots.length) return null;
@@ -919,13 +933,15 @@ function trClassify(it, spots){
     label:`น้ำท่วมขัง${fl.depth ? ` ~${fmt(fl.depth,0)} ซม.` : ""}`,
     note:`ยืนยันจาก ${fl.src}${fl.name ? ` (${fl.name})` : ""} ห่าง ~${fmt(fl.d,0)} ม. · ${raw}`};
   if(it.cat === 11) return {kind:"flood", icon:"🌊", color:"#0284c7", label:"น้ำท่วม (TomTom)", note:"ยังไม่มีข้อมูล กทม./Floodboard ยืนยันจุดนี้"};
+  const wk = trFloodNear(it.line, trWeakSpots());
+  const wkNote = wk ? `มีรายงานแจ้งน้ำท่วมใกล้จุดนี้ (${wk.src}${wk.name ? " · " + wk.name : ""}) แต่เก่า/ความมั่นใจต่ำ — ยังไม่ยืนยัน · ` : "";
   if(it.cat === 7 || it.cat === 8){
     if(TR_CLOSE_RE.test(ev)) return {kind:"closed", icon:"⛔", color:"#7f1d1d", label: it.cat===8 ? "ปิดถนน" : "ปิดช่องจราจร", note:"มีสาเหตุระบุ: " + ev};
     return {kind:"jam", icon:"🚦", color:TR_COLOR[4], label:"รถหยุดนิ่ง / ติดสะสม",
-      note:`${raw} — แต่ไม่พบงานก่อสร้าง อุบัติเหตุ หรือน้ำท่วมยืนยัน มักเป็นรถติดสะสมหน้าไฟแดง/คอขวด`};
+      note:`${wkNote}${raw} — แต่ไม่พบงานก่อสร้าง อุบัติเหตุ หรือน้ำท่วมยืนยัน มักเป็นรถติดสะสมหน้าไฟแดง/คอขวด`};
   }
-  if(it.cat === 6) return {kind:"jam", icon:"🚗", color:trSevColor(it.magnitude, it.length_km, null), label:`รถติด · ${TR_MAG[it.magnitude]||""}`, note:""};
-  return {kind:"other", icon:"⚠️", color:TR_COLOR[it.magnitude]||TR_COLOR[0], label:it.category + (it.magnitude ? ` · ${TR_MAG[it.magnitude]||""}` : ""), note:""};
+  if(it.cat === 6) return {kind:"jam", icon:"🚗", color:trSevColor(it.magnitude, it.length_km, null), label:`รถติด · ${TR_MAG[it.magnitude]||""}`, note:wkNote.replace(/ · $/,"")};
+  return {kind:"other", icon:"⚠️", color:TR_COLOR[it.magnitude]||TR_COLOR[0], label:it.category + (it.magnitude ? ` · ${TR_MAG[it.magnitude]||""}` : ""), note:wkNote.replace(/ · $/,"")};
 }
 function trCard(it, i){
   const k = it.k || trClassify(it, []);
