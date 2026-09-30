@@ -196,7 +196,8 @@ function rvNonthaburi() {
   }).join("");
   return `<h3 class="rv-h3">📍 จังหวัดนนทบุรี · สถานีวัดระดับน้ำ (${st.length} สถานี)</h3>
     <div class="rv-dams">${cards || '<div class="muted">ไม่มีข้อมูลสถานีนนทบุรีรอบนี้</div>'}</div>
-    <div class="note" style="margin-top:6px">ข้อมูลจาก ThaiWater ที่ระบบมี (ตอนนี้ได้ ${st.length} สถานี) · ยังไม่รวมรายงานจุดน้ำท่วมของนนทบุรี — ดูเพิ่มที่ nonthaburi.thaiwater.net/wl</div>`;
+    <div class="note" style="margin-top:6px">ข้อมูลจาก ThaiWater ที่ระบบมี (ตอนนี้ได้ ${st.length} สถานี) · ยังไม่รวมรายงานจุดน้ำท่วมของนนทบุรี — ดูเพิ่มที่ nonthaburi.thaiwater.net/wl</div>
+    <div class="note" style="margin-top:6px">📷 <a href="https://cctv-nont.firsttech.co.th/" target="_blank" rel="noopener noreferrer">ดูกล้องสดท่าน้ำนนท์</a> <span class="muted">(เว็บของ FirstTech ร่วมกับเทศบาลนครนนทบุรี · ภาพสดอย่างเดียว ไม่มีตัวเลขระดับน้ำ)</span></div>`;
 }
 
 /* ---------------- แท็บ ---------------- */
