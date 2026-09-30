@@ -722,6 +722,38 @@ def _newest(times) -> tuple[str, float | None]:
     return best, age
 
 
+BMA_BLOCK_FILE = os.path.join(DATA_DIR, "bma_block.json")
+BMA_BLOCK_HOURS = 3        # กทม. ตอบ 403/429 -> หยุดดึงตรงจากเครื่องนี้ชั่วคราว (ยิงซ้ำระหว่างถูกบล็อก อาจโดนนานขึ้น)
+
+
+def _bma_blocked(name: str) -> str:
+    """คืนเวลา 'HH:MM' ที่จะกลับมาลองดึงตรง ถ้ายังอยู่ในช่วงพัก ไม่งั้นคืน ''"""
+    try:
+        with open(BMA_BLOCK_FILE, "r", encoding="utf-8") as f:
+            until = float((json.load(f) or {}).get(name) or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ""
+    return datetime.fromtimestamp(until).strftime("%H:%M") if until > time.time() else ""
+
+
+def _bma_note_error(name: str, e: Exception) -> None:
+    """ถ้าเป็น 403/429 จดเวลาพักไว้ (ข้อผิดพลาดอื่น เช่น หมดเวลา ไม่พัก)"""
+    if getattr(e, "code", None) not in (403, 429):
+        return
+    try:
+        with open(BMA_BLOCK_FILE, "r", encoding="utf-8") as f:
+            st = json.load(f)
+        st = st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        st = {}
+    st[name] = time.time() + BMA_BLOCK_HOURS * 3600
+    try:
+        with open(BMA_BLOCK_FILE, "w", encoding="utf-8") as f:
+            json.dump(st, f)
+    except OSError:
+        pass
+
+
 def fetch_bma() -> dict:
     """จุดวัดน้ำท่วมถนน กทม. (ระดับน้ำบนผิวถนน หน่วย ซม.)"""
     if not CFG.get("BMA_FLOOD_ENABLED", True):
@@ -740,11 +772,14 @@ def fetch_bma() -> dict:
     if js is not None:     # Worker ส่งชุดเก่า (เว็บ กทม. ไม่ตอบ Worker) -> ลองดึงตรงจากเครื่องนี้อีกทาง
         rows0 = js.get("dtTbl") if isinstance(js, dict) else None
         _, a0 = _newest(_bma_time(r.get("site_timestamp")) for r in (rows0 or []) if isinstance(r, dict))
-        if a0 is not None and a0 > BMA_STALE_MIN:
+        bl = _bma_blocked("flood")
+        if a0 is not None and a0 > BMA_STALE_MIN and bl:
+            via = f"proxy (ข้อมูลเก่า · กทม. บล็อก พักดึงตรงถึง {bl} น.)"
+        elif a0 is not None and a0 > BMA_STALE_MIN:
             try:
                 js2 = _get_json(url, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                              "(KHTML, like Gecko) Chrome/140.0 Safari/537.36 FloodReal/1.0",
+                              "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
                 "Accept": "application/json, text/javascript, */*; q=0.01",
                 "X-Requested-With": "XMLHttpRequest",
                 "Referer": "https://weather.bangkok.go.th/Flood/",
@@ -756,17 +791,22 @@ def fetch_bma() -> dict:
                 else:
                     via = "proxy (ต้นทางเก่า ดึงตรงก็เก่า)"
             except Exception as e:  # noqa: BLE001
-                via = f"proxy (ข้อมูลเก่า · ดึงตรงไม่ได้: {type(e).__name__})"[:80]
+                _bma_note_error("flood", e)
+                via = f"proxy (ข้อมูลเก่า · ดึงตรงไม่ได้: {type(e).__name__} {getattr(e, 'code', '')})"[:80]
+    if js is None and _bma_blocked("flood"):
+        errs.append(f"กทม. บล็อก พักดึงตรงถึง {_bma_blocked('flood')} น.")
+        raise RuntimeError(" | ".join(errs))
     if js is None:
         try:
             js, via = _get_json(url, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                              "(KHTML, like Gecko) Chrome/140.0 Safari/537.36 FloodReal/1.0",
+                              "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
                 "Accept": "application/json, text/javascript, */*; q=0.01",
                 "X-Requested-With": "XMLHttpRequest",
                 "Referer": "https://weather.bangkok.go.th/Flood/",
             }), "direct"
         except Exception as e:  # noqa: BLE001
+            _bma_note_error("flood", e)
             errs.append(f"direct {type(e).__name__}: {e}"[:120])
             raise RuntimeError(" | ".join(errs)) from None
     rows = js.get("dtTbl") if isinstance(js, dict) else js
@@ -977,11 +1017,14 @@ def fetch_bma_canal() -> dict:
             errs.append(f"proxy {type(e).__name__}: {e}"[:120])
     if isinstance(rows, list):     # Worker ส่งชุดเก่า -> ลองดึงตรงจากเครื่องนี้อีกทาง
         _, a0 = _newest(str(r.get("site_timestampTH") or "") for r in rows if isinstance(r, dict))
-        if a0 is not None and a0 > BMA_STALE_MIN:
+        bl = _bma_blocked("canal")
+        if a0 is not None and a0 > BMA_STALE_MIN and bl:
+            via = f"proxy (ข้อมูลเก่า · กทม. บล็อก พักดึงตรงถึง {bl} น.)"
+        elif a0 is not None and a0 > BMA_STALE_MIN:
             try:
                 rows2 = _post_form_json("https://weather.bangkok.go.th/water/PageMap/GoogleMap",
                                         {"payload": "TEST_DATA_GOES_HERE"}, headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0 Safari/537.36 FloodReal/1.0",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0.0.0 Safari/537.36",
                     "X-Requested-With": "XMLHttpRequest", "Referer": "https://weather.bangkok.go.th/water/"})
                 _, a2 = _newest(str(r.get("site_timestampTH") or "") for r in (rows2 if isinstance(rows2, list) else []) if isinstance(r, dict))
                 if a2 is not None and a2 < a0:
@@ -989,14 +1032,19 @@ def fetch_bma_canal() -> dict:
                 else:
                     via = "proxy (ต้นทางเก่า ดึงตรงก็เก่า)"
             except Exception as e:  # noqa: BLE001
-                via = f"proxy (ข้อมูลเก่า · ดึงตรงไม่ได้: {type(e).__name__})"[:80]
+                _bma_note_error("canal", e)
+                via = f"proxy (ข้อมูลเก่า · ดึงตรงไม่ได้: {type(e).__name__} {getattr(e, 'code', '')})"[:80]
+    if rows is None and _bma_blocked("canal"):
+        errs.append(f"กทม. บล็อก พักดึงตรงถึง {_bma_blocked('canal')} น.")
+        raise RuntimeError(" | ".join(errs))
     if rows is None:
         try:
             rows, via = _post_form_json("https://weather.bangkok.go.th/water/PageMap/GoogleMap",
                                         {"payload": "TEST_DATA_GOES_HERE"}, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0 Safari/537.36 FloodReal/1.0",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0.0.0 Safari/537.36",
                 "X-Requested-With": "XMLHttpRequest", "Referer": "https://weather.bangkok.go.th/water/"}), "direct"
         except Exception as e:  # noqa: BLE001
+            _bma_note_error("canal", e)
             errs.append(f"direct {type(e).__name__}: {e}"[:120])
             raise RuntimeError(" | ".join(errs)) from None
     if not isinstance(rows, list):
