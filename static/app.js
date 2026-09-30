@@ -900,6 +900,17 @@ function trFloodNear(line, spots){
   }
   return best;
 }
+/* หมุดกดง่ายบนเส้นที่ติดหนัก/ปานกลาง (มือถือกดเส้นบางๆ ไม่ติด) — วางตรงกลางเส้น กดแล้วขึ้นป้ายเดียวกับเส้น */
+function trHitMarks(ly, items){
+  const hot = items.filter(it=>it.line && it.line.length && it.k && (it.k.kind!=="jam" || it.magnitude>=2 || it.cat===7 || it.cat===8))
+    .sort((a,b)=>(b.magnitude-a.magnitude) || ((b.length_km||0)-(a.length_km||0))).slice(0, 60);
+  hot.forEach(it=>{
+    const mid = it.line[Math.floor((it.line.length-1)/2)];
+    const html = `<div style="width:30px;height:30px;border-radius:50%;background:${it.k.color};border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1">${it.k.icon||"🚗"}</div>`;
+    L.marker(mid, {icon:L.divIcon({className:"", html, iconSize:[30,30], iconAnchor:[15,15]}), zIndexOffset:900})
+      .addTo(ly).bindPopup(trCard(it, 0).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280});
+  });
+}
 function trClassify(it, spots){
   const raw = `TomTom ระบุ: ${it.category}${it.magnitude_text ? " · " + it.magnitude_text : ""}`;
   const ev = (it.events||[]).join(" ");
@@ -1339,6 +1350,7 @@ async function trSearch(q){
       trCamMarkers(ly, camList);
       j.items.forEach(it=>L.polyline(it.line, {color:it.k.color, weight: it.on_road ? 8 : 6, opacity: it.on_road ? .95 : .85, lineCap:"round"})
         .addTo(ly).bindPopup(trCard(it, 0).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280}));
+      trHitMarks(ly, j.items.filter(it=>it.on_road));
       const bb = (j.road && j.road.bbox) || j.bbox;   // [minLon,minLat,maxLon,maxLat] (Worker มีแค่ j.bbox)
       const own = mine.flatMap(i=>i.line);
       // 📍 หมุดตำแหน่งที่ค้นเจอ (Longdo/OSM/TomTom) — กดดูที่มา + เปิดใน Google Maps
@@ -1574,6 +1586,7 @@ async function gzIncidents(prov, name, g, a){
   if(!gzLy) gzLy = L.layerGroup().addTo(trMini);
   items.forEach(it=>L.polyline(it.line, {color:it.k.color, weight:8, opacity:.95, lineCap:"round"})
     .addTo(gzLy).bindPopup(trCard(it, 0).replace('class="tr-item"','class="tr-item" style="cursor:default"'), {maxWidth:280}));
+  trHitMarks(gzLy, items);
   if(list){
     list.innerHTML = items.length ? items.map((it,i)=>trCard(it, i)).join("") : "";
     list.querySelectorAll(".tr-item").forEach(el=>el.addEventListener("click",()=>{
