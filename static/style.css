@@ -319,3 +319,7 @@ input[type=range]{vertical-align:middle;accent-color:var(--accent)}
 .gz-a.on{background:#22c55e;border-color:#22c55e;color:#04210f;font-weight:600}
 
 #trForm[hidden],#trQuick[hidden],#gzFind[hidden]{display:none!important}
+
+/* ตารางฝน: หัวคอลัมน์ตัวเลขชิดขวาให้ตรงกับตัวเลขในแถว */
+#rainTable th.num,#rainNowTable th.num{text-align:right}
+#rainTable td.num,#rainNowTable td.num{white-space:nowrap}
