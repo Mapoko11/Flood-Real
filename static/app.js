@@ -1051,9 +1051,7 @@ async function trPickHere(ll){
 /* ป้ายเตือน: เวลาวัดของ กทม. ไม่เดิน (ต้นทางไม่อัปเดต หรือเว็บ กทม. ไม่ตอบ) */
 function bmaStaleNote(b){
   if(!b || !b.stale_min) return "";
-  const h = Math.floor(b.stale_min/60), m = b.stale_min % 60;
-  const nt = String(b.newest||"").replace("T"," ").slice(0,16);
-  return `<div class="warn" style="margin-bottom:6px">⚠ ข้อมูลต้นทางค้าง — เวลาวัดล่าสุด <b>${esc(nt)}</b> (เก่า ${h ? h+" ชม. " : ""}${m} นาที) · ระบบยังลองดึงทุก ~20 นาที แต่เว็บ กทม. ยังไม่ส่งค่าใหม่ <span class="muted">(ทาง: ${esc(b.via||"")})</span>${/HTTPError|บล็อก/.test(b.via||"") ? '<br><small class="muted">เว็บ กทม. ปฏิเสธการเชื่อมต่อจากเครื่องนี้และตัวกลาง (น่าจะกันยิงถี่) — ปกติจะปลดเองภายในไม่กี่ชั่วโมง</small>' : ""}</div>`;
+  return `<div class="warn" style="margin-bottom:6px">ข้อมูลเวลาวัดของเว็บยังไม่อัปเดต อาจจะช้ากว่าข้อมูลต้นทาง</div>`;
 }
 function trMiniFocus(line, color){
   if(!trMini || !line || !line.length) return false;
