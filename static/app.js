@@ -57,7 +57,7 @@ async function getRadar(){
 const WL = {1:["น้อยวิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["น้ำมาก","#3b82f6"],5:["ล้นตลิ่ง","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
 const RAIN = {0:["ไม่มีฝน","#64748b"],1:["เล็กน้อย","#a5f3fc"],2:["ปานกลาง","#38bdf8"],3:["หนัก","#22c55e"],4:["หนักมาก","#f97316"]};
 const DAM = {1:["วิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["มาก","#3b82f6"],5:["เกินความจุ","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
-const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",bma_seg:"เส้นถนน OSM",cctv:"กล้อง CCTV",floodboard:"Floodboard"};
+const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",rain_now:"ฝนสด กทม./ปริมณฑล",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",bma_seg:"เส้นถนน OSM",cctv:"กล้อง CCTV",floodboard:"Floodboard"};
 const CANAL = {critical:["ถึงระดับวิกฤต","#ef4444"],warning:["เฝ้าระวัง","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"]};
 const BMA = {flood:["น้ำท่วม","#ef4444"],minor:["ท่วมขังเล็กน้อย","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"],unknown:["ไม่ทราบ","#64748b"]};
 function bmaWet(p){ return p.state==="flood" || p.state==="minor"; }
@@ -573,7 +573,37 @@ function renderWl(){
     }).join("") + "</tbody>";
 }
 
+/* ฝนตกหนักตอนนี้ (กทม./นนทบุรี/ปทุมธานี) — ฝน 1 ชม. จาก POPNIX (สถานี กทม. + สสน.) */
+function rnAgeMin(t){
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(t||""));
+  if(!m) return null;
+  return (Date.now() + 7*3600*1000 - Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5])) / 60000;
+}
+function renderRainNow(){
+  const box = $("#rainNowTable"); if(!box) return;
+  const rn = DATA.rain_now || {};
+  const items = rn.items || [];
+  if(!items.length){ box.innerHTML = ""; $("#rainNowInfo").textContent = (DATA.status||{}).rain_now && !DATA.status.rain_now.ok ? "ยังดึงข้อมูลฝนสดไม่ได้: "+DATA.status.rain_now.error : "ยังไม่มีข้อมูลฝนสด"; return; }
+  const pv = $("#rnProv").value, all = $("#rnAll").checked;
+  let rows = items.filter(x=>!pv || x.province===pv).filter(x=>match(x,["name","district","province"]));
+  const total = rows.length;
+  rows = rows.filter(x=>x.r1h!=null);
+  if(!all) rows = rows.slice(0, 25);
+  const age = rnAgeMin(rn.latest);
+  $("#rainNowInfo").innerHTML = `เวลาวัดล่าสุด <b>${esc(String(rn.latest||"–").slice(5,16))}</b>${age!=null ? ` (เก่า ${Math.max(0,Math.round(age))} นาที)` : ""} · แสดง ${rows.length}/${total} สถานี${all?"":" (เรียงจากฝน 1 ชม. มากสุด)"}`;
+  box.innerHTML = `<thead><tr><th>#</th><th>สถานี</th><th>เขต / จังหวัด</th><th class="num">ฝน 1 ชม. (มม.)</th><th class="num">3 ชม.</th><th class="num">24 ชม.</th><th>ระดับ</th><th>เวลา</th></tr></thead><tbody>` +
+    rows.map((x,i)=>{
+      const a = rnAgeMin(x.time), old = !x.online || (a!=null && a>90);
+      const tag = !x.online ? ` <span class="pill" style="background:#64748b">ออฟไลน์</span>` : (old ? ` <span class="pill" style="background:#64748b">ข้อมูลเก่า</span>` : "");
+      return `<tr${old?' style="opacity:.6"':""}><td class="muted">${i+1}</td><td>${esc(x.name)}</td><td>${esc(x.district)} / ${esc(x.province)}</td>
+        <td class="num"><b>${fmt(x.r1h)}</b></td><td class="num">${fmt(x.r3h)}</td><td class="num">${fmt(x.r24h)}</td>
+        <td>${pill(RAIN,x.level)}</td><td class="muted">${esc(String(x.time||"").slice(5,16))}${tag}</td></tr>`;
+    }).join("") + "</tbody>";
+}
+for(const id of ["#rnProv","#rnAll"]){ const el=$(id); if(el) el.addEventListener("change", ()=>{ try{ renderRainNow(); }catch(e){ console.error(e); } }); }
+
 function renderRain(){
+  try{ renderRainNow(); }catch(e){ console.error("renderRainNow", e); }
   const rows = (DATA.rain||[]).filter(r=>match(r,["name","province","amphoe","basin"])).slice(0,500);
   $("#rainCount").textContent = `แสดง ${rows.length} สถานี (เรียงจากฝนมากสุด)`;
   $("#rainTable").innerHTML = `<thead><tr><th>#</th><th>สถานี</th><th>จังหวัด / อำเภอ</th><th>ลุ่มน้ำ</th>

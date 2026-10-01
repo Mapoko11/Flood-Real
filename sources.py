@@ -189,6 +189,55 @@ def fetch_rain() -> list[dict]:
     return out
 
 
+RAIN_NOW_URL = "https://flood.pop.in.th/api_rain.php"
+RAIN_NOW_PROVINCES = ("กรุงเทพมหานคร", "นนทบุรี", "ปทุมธานี")
+
+
+def rain_level_1h(mm) -> int:
+    """เกณฑ์ภายในระบบสำหรับฝน 1 ชม. (ไม่ใช่เกณฑ์ทางการ): >=40 หนักมาก, >=20 หนัก, >=7 ปานกลาง, >0 เล็กน้อย"""
+    if mm is None:
+        return 0
+    if mm >= 40:
+        return 4
+    if mm >= 20:
+        return 3
+    if mm >= 7:
+        return 2
+    return 1 if mm > 0 else 0
+
+
+def fetch_rain_now() -> dict:
+    """ฝนสะสม 1/3/24 ชม. ของ กทม./นนทบุรี/ปทุมธานี จาก POPNIX Flood (สถานี กทม. + สสน.) — ใช้เสริม ThaiWater ที่มีสถานีใน กทม. น้อย"""
+    js = _get_json(RAIN_NOW_URL, headers={"User-Agent": "Mozilla/5.0 (compatible; FloodReal/1.0; +https://mapoko11.github.io/Flood-Real/)"})
+    rows = js.get("stations") if isinstance(js, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("รูปแบบข้อมูลฝน (POPNIX) เปลี่ยนไป")
+    sm = js.get("summary") or {}
+    items = []
+    for r in rows:
+        if not isinstance(r, dict) or r.get("province") not in RAIN_NOW_PROVINCES:
+            continue
+        r1, r3, r24 = _num(r.get("r1h")), _num(r.get("r3h")), _num(r.get("r24h"))
+        items.append({
+            "code": str(r.get("code") or "")[:40],
+            "name": str(r.get("name") or "").strip()[:80],
+            "district": str(r.get("district") or "").strip(),
+            "province": r.get("province"),
+            "agency": str(r.get("agency") or ""),
+            "lat": _num(r.get("lat")), "lon": _num(r.get("lng")),
+            "r1h": r1, "r3h": r3, "r24h": r24,
+            "online": bool(r.get("online")),
+            "time": str(r.get("measured_at") or ""),
+            "level": rain_level_1h(r1),
+        })
+    if not items:
+        raise ValueError("ไม่มีสถานีฝนในพื้นที่ที่เลือก")
+    items.sort(key=lambda x: (x["r1h"] is None, -(x["r1h"] or 0)))
+    return {"configured": True, "at": _now(), "latest": str(sm.get("latest") or ""),
+            "stale": bool(sm.get("stale")), "count": len(items), "items": items,
+            "source": "https://flood.pop.in.th/"}
+
+
 def fetch_main() -> dict:
     """thailand_main = เขื่อน + แผนที่คาดการณ์ฝน + เรดาร์"""
     js = _get_json(CFG["THAIWATER_BASE"] + "/thailand_main")
@@ -1216,6 +1265,7 @@ def fetch_floodboard() -> dict:
 SOURCES = {
     "waterlevel": fetch_waterlevel,
     "rain": fetch_rain,
+    "rain_now": fetch_rain_now,
     "main": fetch_main,
     "gistda": fetch_gistda,
     "tmd": fetch_tmd,

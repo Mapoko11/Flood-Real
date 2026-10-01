@@ -46,7 +46,7 @@ def seed_from_live_site() -> None:
                 "bma": prev.get("bma") or {}, "bma_canal": prev.get("bma_canal") or {}}
         # แหล่งอื่นเก็บข้อมูลรอบก่อนไว้ด้วย: ถ้ารอบนี้ดึงไม่ได้ (เช่น ThaiWater ตอบช้าชั่วคราว)
         # จะใช้ข้อมูลเดิมแทน เว็บไม่ล้ม (หน้าเว็บจะขึ้นสถานะว่าแหล่งนั้นดึงไม่ได้)
-        for k in ("waterlevel", "rain", "main", "traffy", "cctv", "floodboard", "bma_seg"):
+        for k in ("waterlevel", "rain", "rain_now", "main", "traffy", "cctv", "floodboard", "bma_seg"):
             if prev.get(k):
                 seed[k] = prev[k]
         # Traffy ถูกแยกไปไฟล์ data/traffy.json -> ดึงตัวเต็มกลับมาเป็นข้อมูลรอบก่อน

@@ -101,6 +101,17 @@
   </section>
 
   <section class="panel" id="tab-rain">
+    <div id="rainNowBox" style="margin-bottom:14px">
+      <h3 class="rv-h3">🌧 ฝนตกหนักตอนนี้ (กทม. / นนทบุรี / ปทุมธานี)</h3>
+      <div class="filters">
+        <select id="rnProv"><option value="">ทุกจังหวัด</option><option>กรุงเทพมหานคร</option><option>นนทบุรี</option><option>ปทุมธานี</option></select>
+        <label class="muted"><input type="checkbox" id="rnAll"> แสดงทุกสถานี</label>
+        <span class="muted" id="rainNowInfo"></span>
+      </div>
+      <div class="table-wrap"><table id="rainNowTable"></table></div>
+      <div class="note" style="margin-top:6px">ข้อมูล: สำนักการระบายน้ำ กทม. และ สสน. ผ่าน POPNIX Flood (<a href="https://flood.pop.in.th/" target="_blank" rel="noopener noreferrer">flood.pop.in.th</a>) · ไม่ใช่ประกาศทางการ · ค่าเป็นของจุดวัดเท่านั้น พื้นที่อื่นอาจต่างออกไป · ระดับสีใช้เกณฑ์ภายในระบบ</div>
+    </div>
+    <h3 class="rv-h3">ฝนสะสม 24 ชม. ทั่วประเทศ (ThaiWater)</h3>
     <div class="filters"><span class="muted" id="rainCount"></span></div>
     <div class="table-wrap"><table id="rainTable"></table></div>
   </section>
