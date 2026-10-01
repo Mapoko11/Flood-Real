@@ -57,10 +57,12 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: cors });
     // เครื่องเจ้าของ (Flood real ในเครื่อง) ส่งข้อมูล กทม. ที่ดึงตรงได้ขึ้นมาให้ (กทม. บล็อก Cloudflare/GitHub บ่อย)
     if (request.method === "POST" && url.pathname === "/bma-push") return await bmaPush(request, env, url, cors);
+    if (request.method === "POST" && url.pathname === "/bma-view-push") return await bmaViewPush(request, env, url, cors);
     if (request.method !== "GET") return json({ ok: false, error: "method" }, 405, cors);
 
     // ข้อมูลน้ำท่วมถนน กทม. (ข้อมูลสาธารณะ) — เปิดให้ server ในเครื่อง/GitHub Actions เรียกได้ด้วย
     // ต้นทางถูกเรียกไม่เกิน 1 ครั้ง / 10 นาที ไม่ว่าจะมีคนเรียกกี่ครั้ง (cache)
+    if (url.pathname === "/bma-view") return await bmaView(env, url, cors);
     if (url.pathname === "/bma") return await bma(env, ctx, cors);
     if (url.pathname === "/bma-canal") return await bma(env, ctx, cors, "canal");
     // อ่านหน้า "ระดับน้ำในคลอง" ของ กทม. ผ่าน Worker (จำกัดเฉพาะ path /water... เท่านั้น, cache 10 นาที)
@@ -608,6 +610,27 @@ async function bmaPush(request, env, url, cors) {
   await env.COUNTER.put(kvKey + ":try", JSON.stringify({ t: Date.now(), ok: true, by: "push" }), { expirationTtl: 86400 });
   try { await caches.default.delete(new Request("https://floodreal-cache.local/bma-" + name)); } catch (e) {}
   return json({ ok: true, name, bytes: t.length }, 200, cors);
+}
+
+// ข้อมูลที่ host ประมวลผลแล้ว (รูปแบบเดียวกับที่หน้าเว็บใช้) — ให้หน้าเว็บ GitHub ดึงสดทุก 5 นาที
+async function bmaViewPush(request, env, url, cors) {
+  const tok = String(env.BMA_PUSH_TOKEN || "");
+  const got = request.headers.get("X-Push-Token") || "";
+  if (tok.length < 16 || got !== tok) return json({ ok: false, error: "ไม่อนุญาต" }, 403, cors);
+  const name = url.searchParams.get("name") === "canal" ? "canal" : "flood";
+  const t = await request.text();
+  if (t.length > 1e6) return json({ ok: false, error: "ใหญ่เกิน" }, 413, cors);
+  let j; try { j = JSON.parse(t); } catch (e) { return json({ ok: false, error: "ไม่ใช่ JSON" }, 400, cors); }
+  if (!j || !Array.isArray(j.points) || !j.points.length) return json({ ok: false, error: "รูปแบบไม่ถูก" }, 400, cors);
+  await env.COUNTER.put("bma:view-" + name, t, { expirationTtl: 2 * 86400 });
+  return json({ ok: true, name, bytes: t.length }, 200, cors);
+}
+
+async function bmaView(env, url, cors) {
+  const name = url.searchParams.get("name") === "canal" ? "canal" : "flood";
+  const t = await env.COUNTER.get("bma:view-" + name);
+  if (!t) return json({ ok: false, error: "ยังไม่มีข้อมูล" }, 404, cors);
+  return new Response(t, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=120" } });
 }
 
 async function bma(env, ctx, cors, name = "flood") {

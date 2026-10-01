@@ -106,10 +106,32 @@ function match(o, keys){ const s=q(); if(!s) return true; return keys.some(k => 
 function hasLL(o){ return typeof o.lat==="number" && typeof o.lon==="number" && Math.abs(o.lat)>0.1; }
 
 /* ---------------- โหลดข้อมูล ---------------- */
+/* เว็บ static: ข้อมูล กทม. สด จาก Worker (host ส่งขึ้นไว้) ทุก 5 นาที — ไม่ต้องรอ build 15 นาที */
+const BMA_LIVE = {};
+function bmaLiveApply(){
+  if(!STATIC || !DATA) return false;
+  let ch = false;
+  for(const [k, key] of [["flood","bma"],["canal","bma_canal"]]){
+    const j = BMA_LIVE[k], cur = DATA[key] || {};
+    if(j && j.points && String(j.at||"") > String(cur.at||"")){ DATA[key] = j; ch = true; }
+  }
+  return ch;
+}
+async function bmaLive(){
+  if(!STATIC || !PROXY) return;
+  for(const k of ["flood","canal"]){
+    try{
+      const j = await fetch(`${PROXY}/bma-view?name=${k}`).then(r=>r.ok ? r.json() : null);
+      if(j && j.points) BMA_LIVE[k] = j;
+    }catch(e){}
+  }
+  if(bmaLiveApply()){ try{ renderBma(); renderCanal(); }catch(e){ console.error(e); } }
+}
 async function load(){
   try{
     const r = await fetch(API.data(), {cache:"no-store"});
     DATA = await r.json();
+    bmaLiveApply();
     camApplyHide();
     renderAll();
     loadTraffySplit();
@@ -1555,7 +1577,8 @@ loadVisits(); setInterval(loadVisits, 10*60*1000);
 /* เว็บ GitHub: รูปแผนที่คาดการณ์ฝนของ ThaiWater ถูกบล็อกไม่ให้แสดงข้ามเว็บ (รูปแตก) -> ซ่อนหัวข้อ+รูป (ใช้งานได้ปกติบน localhost) */
 if(STATIC){ for(const id of ["#fcImgs","#rdImgs"]){ const fi=$(id); if(fi){ fi.style.display="none"; const h=fi.previousElementSibling; if(h && h.tagName==="H3") h.style.display="none"; } } }
 load();
-setInterval(load, 60*1000);   // อ่านจาก cache ในเครื่อง เบา ถี่ได้ -> เห็นข้อมูลใหม่ภายใน 1 นาที
+setInterval(load, 60*1000);
+bmaLive(); setInterval(bmaLive, 5*60*1000);   // อ่านจาก cache ในเครื่อง เบา ถี่ได้ -> เห็นข้อมูลใหม่ภายใน 1 นาที
 
 
 /* ขอบเขตเขต/อำเภอ (ตัดจาก OpenGISData-Thailand, ย่อแล้ว ~43 KB) โหลดครั้งแรกที่เลือกพื้นที่ */

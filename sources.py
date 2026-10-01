@@ -677,6 +677,22 @@ def _bma_state(txt: str) -> str:
     return "unknown"
 
 
+def _bma_view_push(name: str, obj) -> None:
+    """ส่งข้อมูลที่ประมวลผลแล้ว (รูปแบบเดียวกับหน้าเว็บ) ขึ้น Worker ให้เว็บ GitHub ดึงสดทุก 5 นาที · ล้มเหลวเงียบๆ"""
+    tok = (CFG.get("BMA_PUSH_TOKEN") or "").strip()
+    proxy = (CFG.get("BMA_PROXY_URL") or "").strip()
+    if not tok or not proxy:
+        return
+    try:
+        req = urllib.request.Request(proxy.rsplit("/", 1)[0] + "/bma-view-push?name=" + name,
+                                     data=json.dumps(obj, ensure_ascii=False).encode("utf-8"), method="POST",
+                                     headers={"Content-Type": "application/json", "X-Push-Token": tok, "User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _bma_push(name: str, obj) -> None:
     """ส่งข้อมูล กทม. ที่ดึงตรงได้ ขึ้น Worker (ให้เว็บ GitHub ใช้ต่อ) — ต้องตั้ง BMA_PUSH_TOKEN ใน config_local.json · ล้มเหลวเงียบๆ"""
     tok = (CFG.get("BMA_PUSH_TOKEN") or "").strip()
@@ -841,10 +857,13 @@ def fetch_bma() -> dict:
     nt, na = _newest(p["time"] for p in pts)
     if via.startswith("direct"):
         _bma_push("flood", js)
-    return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
+    res = {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
             "hist": _bma_hist(old.get("hist"), pts),
             "newest": nt, "stale_min": round(na) if (na is not None and na > BMA_STALE_MIN) else 0,
             "source": "https://weather.bangkok.go.th/Flood/"}
+    if via.startswith("direct"):
+        _bma_view_push("flood", res)
+    return res
 
 
 BMA_HIST_HOURS = 49      # เก็บภาพย้อนหลังไว้เทียบ "น้ำลด/เพิ่ม" (ชั่วโมงละ 1 ภาพ)
@@ -1079,9 +1098,12 @@ def fetch_bma_canal() -> dict:
     nt, na = _newest(p["time"] for p in pts)
     if via.startswith("direct"):
         _bma_push("canal", rows)
-    return {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
+    res = {"configured": True, "at": _now(), "via": via, "points": pts, "count": count,
             "newest": nt, "stale_min": round(na) if (na is not None and na > BMA_STALE_MIN) else 0,
             "source": "https://weather.bangkok.go.th/water"}
+    if via.startswith("direct"):
+        _bma_view_push("canal", res)
+    return res
 
 
 
