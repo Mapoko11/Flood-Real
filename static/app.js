@@ -541,22 +541,35 @@ function syncLayers(){
 }
 
 /* ---------------- ตาราง ---------------- */
+/* เวลาวัดของสถานี (เวลาไทย): "future" = เวลาล้ำหน้าปัจจุบัน (ต้นทางส่งมาผิดปกติ) · "old" = เก่ากว่า 6 ชม. (สถานีไม่ส่งข้อมูล) */
+const WL_OLD_MIN = 360;
+function wlTimeFlag(t){
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(t||""));
+  if(!m) return "";
+  const at = Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5]);
+  const nowTh = Date.now() + 7*3600*1000;
+  const diff = (nowTh - at) / 60000;
+  return diff < -30 ? "future" : diff > WL_OLD_MIN ? "old" : "";
+}
 function renderWl(){
   const lv = $("#wlLevel").value;
   const rows = (DATA.waterlevel||[]).filter(w=>match(w,["name","province","amphoe","basin","river"]))
     .filter(w=>!lv || String(w.level)===lv)
-    .sort((a,b)=>(b.bank_pct??-1)-(a.bank_pct??-1));
+    .map(w=>({w, f: wlTimeFlag(w.time)}))
+    .sort((a,b)=>((a.f?1:0)-(b.f?1:0)) || ((b.w.bank_pct??-1)-(a.w.bank_pct??-1)));
   $("#wlCount").textContent = `${rows.length} สถานี`;
   $("#wlTable").innerHTML = `<thead><tr><th>สถานี</th><th>จังหวัด / อำเภอ</th><th>ลุ่มน้ำ / แม่น้ำ</th>
     <th class="num">ระดับน้ำ (ม.รทก.)</th><th>% ความจุลำน้ำ</th><th>สถานการณ์</th><th>เวลา</th></tr></thead><tbody>` +
-    rows.map(w=>{
+    rows.map(({w, f})=>{
       const p = Math.max(0, Math.min(100, w.bank_pct||0)); const c=(WL[w.level]||WL[0])[1];
       const trend = (w.wl_msl!=null && w.wl_prev!=null) ? (w.wl_msl>w.wl_prev?" ▲":(w.wl_msl<w.wl_prev?" ▼":"")) : "";
-      return `<tr><td>${esc(w.name)}</td><td>${esc(w.province)} / ${esc(w.amphoe)}</td>
+      const tag = f==="future" ? ` <span class="pill" style="background:#64748b" title="เวลาที่ต้นทางส่งมาล้ำหน้าเวลาปัจจุบัน">เวลาผิดปกติ</span>`
+                : f==="old" ? ` <span class="pill" style="background:#64748b" title="สถานีไม่ส่งข้อมูลใหม่เกิน 6 ชั่วโมง">ข้อมูลเก่า</span>` : "";
+      return `<tr${f?' style="opacity:.6"':""}><td>${esc(w.name)}</td><td>${esc(w.province)} / ${esc(w.amphoe)}</td>
         <td>${esc(w.basin)}${w.river?" / "+esc(w.river):""}</td>
         <td class="num">${fmt(w.wl_msl,2)}${trend}</td>
         <td><div style="display:flex;gap:8px;align-items:center"><div class="bar" style="flex:1"><i style="width:${p}%;background:${c}"></i></div>${fmt(w.bank_pct,0)}%</div></td>
-        <td>${pill(WL,w.level)}</td><td class="muted">${esc(w.time)}</td></tr>`;
+        <td>${pill(WL,w.level)}</td><td class="muted">${esc(w.time)}${tag}</td></tr>`;
     }).join("") + "</tbody>";
 }
 
