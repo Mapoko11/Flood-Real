@@ -277,6 +277,33 @@ def periodic_summary(data: dict) -> str:
 EVENING_STATE = os.path.join(DATA_DIR, "evening_state.json")
 
 
+def _evening_segments(traffic) -> list:
+    """ช่วงถนนที่เจ้าของสนใจ (A → B): ใช้เส้นทางแนะนำของ TomTom ดูว่าติดปานกลางขึ้นไปกี่ช่วง/กี่ กม./หน่วงกี่นาที"""
+    segs = [s for s in (CFG.get("EVENING_JAM_SEGMENTS") or []) if isinstance(s, (list, tuple)) and len(s) == 2]
+    out = []
+    for a, b in segs:
+        label = f"{a} → {b}"
+        try:
+            res = traffic.route(str(a), str(b))
+            rt = (res.get("routes") or [])[res.get("best", 0)]
+        except Exception as e:  # noqa: BLE001 - ช่วงไหนตรวจไม่ได้ก็ข้าม ไม่ให้ข้อความทั้งฉบับล้ม
+            out.append(f"❔ {label}: ตรวจไม่ได้ ({type(e).__name__})")
+            continue
+        jams = [j for j in (rt.get("jams") or []) if int(j.get("magnitude") or 0) >= 2]
+        km = 0.0
+        for j in jams:
+            ln = j.get("line") or []
+            km += sum(traffic._km(ln[i][0], ln[i][1], ln[i + 1][0], ln[i + 1][1]) for i in range(len(ln) - 1))
+        delay, mins, free = rt.get("delay_min") or 0, rt.get("minutes"), rt.get("free_minutes")
+        timing = f"ใช้เวลา ~{mins} นาที" + (f" (ปกติ ~{free})" if free else "") + (f" · หน่วง +{delay} นาที" if delay else "")
+        if jams:
+            worst = max(int(j.get("magnitude") or 0) for j in jams)
+            out.append(f"{'🔴' if worst >= 3 else '🟠'} {label}: ติด {len(jams)} ช่วง รวม ~{km:.1f} กม. · {timing}")
+        else:
+            out.append(f"✅ {label}: ไม่ติดปานกลางขึ้นไป · {timing}")
+    return (["🛣️ ช่วงที่ติดตาม:"] + out) if out else []
+
+
 def build_evening_jam(data: dict) -> str:
     import traffic
     roads = [str(r) for r in (CFG.get("EVENING_JAM_ROADS") or []) if str(r).strip()]
@@ -310,6 +337,7 @@ def build_evening_jam(data: dict) -> str:
         out.append("ตรวจถนนไม่ได้ในรอบนี้ (TomTom ไม่ตอบ หรือโควตาหมด)")
     if failed and checked:
         out.append(f"(ตรวจไม่ได้ {failed} สาย)")
+    out += _evening_segments(traffic)
     bma = data.get("bma") or {}
     if bma.get("points") is not None:
         fl = [p for p in bma["points"] if p.get("state") in ("flood", "minor")]
