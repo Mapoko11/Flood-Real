@@ -720,7 +720,7 @@ function renderCanal(){
   const box = $("#canalTable"); if(!box) return;
   if(!b.points){ const st=(DATA.status||{}).bma_canal; $("#canalInfo").textContent = st&&!st.ok ? "ยังดึงข้อมูลคลองไม่ได้: "+st.error : "ยังไม่มีข้อมูลคลอง"; box.innerHTML=""; return; }
   const c=b.count||{};
-  $("#canalInfo").innerHTML = bmaStaleNote(b) + `ถึงระดับวิกฤต <b style="color:${CANAL.critical[1]}">${c.critical||0}</b> · เฝ้าระวัง <b style="color:${CANAL.warning[1]}">${c.warning||0}</b> · ปกติ ${c.normal||0} · ขัดข้อง ${c.down||0} สถานี <span class="muted">· <a href="${safeUrl(b.source)}" target="_blank" rel="noopener">สำนักการระบายน้ำ กทม.</a></span>`;
+  $("#canalInfo").innerHTML = bmaStaleNote(b) + `ถึงระดับวิกฤต <b style="color:${CANAL.critical[1]}">${c.critical||0}</b> · เฝ้าระวัง <b style="color:${CANAL.warning[1]}">${c.warning||0}</b> · ปกติ ${c.normal||0} · ขัดข้อง ${c.down||0} สถานี <span class="muted">· <a href="${safeUrl(b.source)}" target="_blank" rel="noopener">สำนักการระบายน้ำ กทม.${b.alt==="popnix"?" ผ่าน POPNIX Flood (ข้อมูลสำรอง)":""}</a></span>`;
   const pts = b.points.filter(p=>p.state==="critical"||p.state==="warning").filter(p=>match(p,["name","full","district"]));
   box.innerHTML = `<thead><tr><th>สถานี (คลอง)</th><th>เขต</th><th class="num">ในคลอง</th><th class="num">เฝ้าระวัง</th><th class="num">วิกฤต</th><th>สถานะ</th><th>เวลา</th></tr></thead><tbody>` +
     (pts.length ? pts.map((p,i)=>`<tr class="bma-row" data-i="${i}"><td><b>${esc(p.name)}</b></td><td>${esc(p.district)}</td><td class="num"><b>${fmt(p.wl_in,2)}</b></td><td class="num">${fmt(p.warn,2)}</td><td class="num">${fmt(p.crit,2)}</td><td>${pill(CANAL,p.state)}</td><td>${esc(String(p.time||"").slice(-5))}</td></tr>`).join("")

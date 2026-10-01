@@ -1069,7 +1069,7 @@ def _canal_state(r: dict) -> str:
     return "normal"
 
 
-def fetch_bma_canal() -> dict:
+def _fetch_bma_canal_bma() -> dict:
     """ระดับน้ำในคลอง กทม. (ม.รทก.) + เกณฑ์เฝ้าระวัง/วิกฤต ของแต่ละสถานี"""
     if not CFG.get("BMA_FLOOD_ENABLED", True):
         return {"configured": False, "points": []}
@@ -1160,6 +1160,81 @@ def fetch_bma_canal() -> dict:
 CCTV_URL = "https://camera.longdo.com/feed/?command=json"
 CCTV_HEALTH_SYNC = False     # build_static.py ตั้งเป็น True (รอตรวจกล้องให้เสร็จก่อนสร้างเว็บ)
 CCTV_EVERY_MINUTES = 60      # รายชื่อกล้องแทบไม่เปลี่ยน ดึงชั่วโมงละครั้งพอ (ภาพจริงเบราว์เซอร์โหลดจากต้นทางเอง)
+
+
+CANAL_POPNIX_URL = "https://flood.pop.in.th/api_overview.php"
+
+
+def _canal_from_popnix() -> dict:
+    """ระดับน้ำคลอง กทม. จาก POPNIX Flood (ต้นทาง = สำนักการระบายน้ำ กทม.) — ใช้เป็นสำรองเมื่อดึงจาก กทม. ไม่ได้/ค้าง"""
+    js = _get_json(CANAL_POPNIX_URL, headers={"User-Agent": "Mozilla/5.0 (compatible; FloodReal/1.0; +https://mapoko11.github.io/Flood-Real/)"})
+    rows = js.get("stations") if isinstance(js, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("รูปแบบข้อมูลคลอง (POPNIX) เปลี่ยนไป")
+    pts = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        t = str(r.get("measured_at") or "")
+        try:
+            dt = datetime.strptime(t[:16], "%Y-%m-%d %H:%M")
+            tth = f"{dt.day:02d}/{dt.month:02d}/{dt.year + 543} {dt.hour:02d}:{dt.minute:02d}"
+        except ValueError:
+            tth = ""
+        wl, warn, crit = _num(r.get("wl")), _num(r.get("warn")), _num(r.get("crit"))
+        age = _age_min(tth)
+        if not r.get("online") or wl is None or (age is not None and age > CANAL_STALE_MINUTES):
+            state = "down"
+        elif crit is not None and wl >= crit:
+            state = "critical"
+        elif warn is not None and wl >= warn:
+            state = "warning"
+        else:
+            state = "normal"
+        name = str(r.get("name") or "").strip()[:120]
+        pts.append({
+            "code": "PN" + str(r.get("id") or "")[:16], "name": name,
+            "full": (name + (" · " + str(r.get("river")).strip() if r.get("river") else ""))[:160],
+            "district": "", "lat": _num(r.get("lat")), "lon": _num(r.get("lng")),
+            "wl_in": wl, "wl_out1": None, "wl_out2": None, "warn": warn, "crit": crit,
+            "warn_out1": None, "crit_out1": None,
+            "bank_l": _num(r.get("bank")), "bank_r": _num(r.get("bank")),
+            "max_today": _num(r.get("max_day")), "gates": [], "time": tth,
+            "age_min": round(age) if age is not None else None, "state": state,
+            "status_txt": {"critical": "วิกฤต", "warning": "เฝ้าระวัง", "normal": "ปกติ", "down": "ขัดข้อง"}[state],
+        })
+    order = {"critical": 0, "warning": 1, "normal": 2, "down": 3}
+    pts.sort(key=lambda p: (order.get(p["state"], 9), p["name"]))
+    count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
+    nt, na = _newest(p["time"] for p in pts)
+    return {"configured": True, "at": _now(), "via": "POPNIX (สำรอง)", "alt": "popnix", "points": pts, "count": count,
+            "newest": nt, "stale_min": round(na) if (na is not None and na > BMA_STALE_MIN) else 0,
+            "source": "https://flood.pop.in.th/"}
+
+
+def fetch_bma_canal() -> dict:
+    """คลอง กทม.: ใช้ข้อมูลจาก กทม. ก่อน ถ้าดึงไม่ได้หรือค้าง (> BMA_STALE_MIN) ใช้ POPNIX ถ้าใหม่กว่า"""
+    if not CFG.get("BMA_FLOOD_ENABLED", True):
+        return {"configured": False, "points": []}
+    res, err = None, None
+    try:
+        res = _fetch_bma_canal_bma()
+    except Exception as e:  # noqa: BLE001
+        err = e
+    if res is None or res.get("alt") or (res.get("stale_min") or 0) > 0:
+        try:
+            pn = _canal_from_popnix()
+            _, a_pn = _newest([pn.get("newest") or ""])
+            _, a_bm = _newest([(res or {}).get("newest") or ""])
+            if a_pn is not None and (a_bm is None or a_pn < a_bm):
+                pn["via"] = "POPNIX (สำรอง · กทม. " + ("ดึงไม่ได้" if res is None else "ข้อมูลค้าง") + ")"
+                _bma_view_push("canal", pn)
+                return pn
+        except Exception:  # noqa: BLE001
+            pass
+    if res is None:
+        raise err
+    return res
 
 
 def _https(u) -> str:
