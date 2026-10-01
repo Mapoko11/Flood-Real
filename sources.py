@@ -788,7 +788,7 @@ def _newest(times) -> tuple[str, float | None]:
 
 
 BMA_BLOCK_FILE = os.path.join(DATA_DIR, "bma_block.json")
-BMA_BLOCK_HOURS = 3        # กทม. ตอบ 403/429 -> หยุดดึงตรงจากเครื่องนี้ชั่วคราว (ยิงซ้ำระหว่างถูกบล็อก อาจโดนนานขึ้น)
+BMA_BLOCK_HOURS = 0.5        # กทม. ตอบ 403/429 -> หยุดดึงตรงจากเครื่องนี้ชั่วคราว (ยิงซ้ำระหว่างถูกบล็อก อาจโดนนานขึ้น)
 
 
 def _bma_blocked(name: str) -> str:
