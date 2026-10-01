@@ -53,6 +53,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
 th{position:sticky;top:0;background:var(--panel2);font-weight:600;z-index:1}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
+th.num{text-align:right}   /* หัวคอลัมน์ตัวเลขชิดขวาให้ตรงกับข้อมูล (ทุกตาราง) */
 tr:hover td{background:#18243f}
 .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12.5px;font-weight:600;color:#fff}
 .bar{height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;min-width:90px}
