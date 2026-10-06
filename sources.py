@@ -819,7 +819,7 @@ def _bma_note_error(name: str, e: Exception) -> None:
         pass
 
 
-def fetch_bma() -> dict:
+def _fetch_bma_bma() -> dict:
     """จุดวัดน้ำท่วมถนน กทม. (ระดับน้ำบนผิวถนน หน่วย ซม.)"""
     if not CFG.get("BMA_FLOOD_ENABLED", True):
         return {"configured": False, "points": []}
@@ -912,6 +912,87 @@ def fetch_bma() -> dict:
             "source": "https://weather.bangkok.go.th/Flood/"}
     if via.startswith("direct"):
         _bma_view_push("flood", res)
+    return res
+
+
+ROADS_POPNIX_URL = "https://flood.pop.in.th/api_roads.php"
+_ROADS_LEVEL = {"dry": "normal", "slight": "minor", "flood": "flood", "off": "down"}
+
+
+def _roads_from_popnix(old: dict) -> dict:
+    """จุดน้ำท่วมถนน กทม. จาก POPNIX Flood (ต้นทาง = สำนักการระบายน้ำ กทม.) — ใช้เป็นสำรองเมื่อดึงจาก กทม. ไม่ได้/ค้าง"""
+    js = _get_json(ROADS_POPNIX_URL, headers={"User-Agent": "Mozilla/5.0 (compatible; FloodReal/1.0; +https://mapoko11.github.io/Flood-Real/)"})
+    rows = js.get("roads") if isinstance(js, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("รูปแบบข้อมูลถนน (POPNIX) เปลี่ยนไป")
+    prev = {p.get("code"): p for p in (old.get("points") or []) if isinstance(p, dict)}
+
+    def iso(v):
+        t = str(v or "").strip().replace(" ", "T")[:19]
+        try:
+            datetime.strptime(t, "%Y-%m-%dT%H:%M:%S")
+            return t
+        except ValueError:
+            return ""
+    pts = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        code = str(r.get("code") or "")[:20]
+        o = prev.get(code) or {}
+        state = _ROADS_LEVEL.get(str(r.get("level") or ""), "unknown")
+        if r.get("msg_fail"):
+            state = "down"
+        tm = iso(r.get("measured_at"))
+        pts.append({
+            "code": code,
+            "name": (o.get("name") or str(r.get("name") or "").strip())[:120],
+            "road": (o.get("road") or str(r.get("road") or "").strip())[:80],
+            "district": (o.get("district") or str(r.get("district") or "").strip())[:40],
+            "lat": _num(r.get("lat")) if r.get("lat") is not None else o.get("lat"),
+            "lon": _num(r.get("lng")) if r.get("lng") is not None else o.get("lon"),
+            "cm": _num(r.get("depth")) if state != "down" else None,
+            "max_cm": _num(r.get("flood_max")),
+            "state": state,
+            "status_txt": {"normal": "ปกติ", "minor": "ท่วมเล็กน้อย", "flood": "น้ำท่วม",
+                           "down": "ขัดข้อง"}.get(state, "")[:30],
+            "since": iso(r.get("since")) if state in ("flood", "minor") else "",
+            "time": tm,
+            "tunnel": bool(o.get("tunnel", False)),
+        })
+    order = {"flood": 0, "minor": 1, "normal": 2, "unknown": 3, "down": 4}
+    pts.sort(key=lambda p: (order.get(p["state"], 9), -(p["cm"] or 0)))
+    count = {k: sum(1 for p in pts if p["state"] == k) for k in order}
+    nt, na = _newest(p["time"] for p in pts)
+    return {"configured": True, "at": _now(), "via": "POPNIX (สำรอง)", "alt": "popnix", "points": pts, "count": count,
+            "hist": _bma_hist(old.get("hist"), pts),
+            "newest": nt, "stale_min": round(na) if (na is not None and na > BMA_STALE_MIN) else 0,
+            "source": "https://flood.pop.in.th/"}
+
+
+def fetch_bma() -> dict:
+    """น้ำท่วมถนน กทม.: ใช้ข้อมูลจาก กทม. ก่อน ถ้าดึงไม่ได้หรือค้าง (> BMA_STALE_MIN) ใช้ POPNIX ถ้าใหม่กว่า"""
+    if not CFG.get("BMA_FLOOD_ENABLED", True):
+        return {"configured": False, "points": []}
+    old = load_cache().get("bma") or {}
+    res, err = None, None
+    try:
+        res = _fetch_bma_bma()
+    except Exception as e:  # noqa: BLE001
+        err = e
+    if res is None or res.get("alt") or (res.get("stale_min") or 0) > 0 or not res.get("newest"):
+        try:
+            pn = _roads_from_popnix(old)
+            _, a_pn = _newest([p["time"] for p in pn["points"]])
+            _, a_bm = _newest([(res or {}).get("newest") or ""]) if (res and not res.get("alt")) else (None, None)
+            if a_pn is not None and (a_bm is None or a_pn < a_bm):
+                pn["via"] = "POPNIX (สำรอง · กทม. " + ("ดึงไม่ได้" if res is None else "ข้อมูลค้าง") + ")"
+                _bma_view_push("flood", pn)
+                return pn
+        except Exception:  # noqa: BLE001
+            pass
+    if res is None:
+        raise err
     return res
 
 
