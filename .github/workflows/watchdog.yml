@@ -1,0 +1,34 @@
+# ยกเลิกรอบ build/deploy ที่ค้างนานเกิน 40 นาที (กันคิว "pages" ถูกรอบค้างถือไว้ จนเว็บไม่อัปเดตหลายวัน)
+name: Watchdog stuck runs
+
+on:
+  schedule:
+    - cron: "12,42 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel-stuck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel stuck Pages runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          cutoff=$(date -u -d '40 minutes ago' +%s)
+          for st in in_progress queued waiting pending requested; do
+            gh api "repos/$REPO/actions/workflows/pages.yml/runs?status=$st&per_page=50" \
+              --jq '.workflow_runs[] | "\(.id) \(.created_at)"' | while read -r id created; do
+              t=$(date -u -d "$created" +%s)
+              if [ "$t" -lt "$cutoff" ]; then
+                echo "cancel run $id (created $created, status $st)"
+                gh api -X POST "repos/$REPO/actions/runs/$id/cancel" \
+                  || gh api -X POST "repos/$REPO/actions/runs/$id/force-cancel" || true
+              fi
+            done
+          done

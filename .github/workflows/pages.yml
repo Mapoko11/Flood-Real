@@ -46,6 +46,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10         # กัน deploy ค้างจนรอบถัดไปถูกยกเลิกทั้งหมด (เหตุการณ์ 6-9 ต.ค.)
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
