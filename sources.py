@@ -136,6 +136,26 @@ def dam_level(pct) -> int:
 # ---------------------------------------------------------------- ThaiWater
 
 
+def _tw_fail(js, what: str):
+    """ThaiWater ตอบ HTTP 200 แต่ข้างในเป็น result:"NO" (เช่น ฐานข้อมูลเต็ม 11 ต.ค.) -> raise พร้อมสาเหตุจริง
+    ถ้าไม่พบสาเหตุ -> raise ว่า "ส่งข้อมูลว่าง" (ผู้เรียกใช้ข้อมูลรอบก่อนแทน)"""
+    msg, stack = "", [(js, 0)]
+    while stack and not msg:
+        o, depth = stack.pop()
+        if isinstance(o, dict):
+            if str(o.get("result", "")).upper() == "NO":
+                d = o.get("data")
+                msg = str((d.get("Message") or d.get("message") or d) if isinstance(d, dict) else d or "result NO")
+                break
+            if depth < 3:
+                stack.extend((v, depth + 1) for v in o.values() if isinstance(v, dict))
+    if msg:
+        low = msg.lower()
+        why = "ฐานข้อมูลขัดข้อง" if ("connection" in low or "database" in low or "pq:" in low) else "ระบบขัดข้อง"
+        raise ValueError(f"ThaiWater {why} ({what}): {msg.strip()[:120]}")
+    raise ValueError(f"ThaiWater ส่งข้อมูล{what}ว่าง")
+
+
 def fetch_waterlevel() -> list[dict]:
     js = _get_json(CFG["THAIWATER_BASE"] + "/waterlevel_load")
     rows = _items(js, "waterlevel_data", "data") or _items(js, "data")
@@ -162,7 +182,7 @@ def fetch_waterlevel() -> list[dict]:
             "agency": _th((it.get("agency") or {}).get("agency_shortname")),
         })
     if not out:      # ThaiWater ตอบรายการว่าง (ไม่ error) -> ถือว่าดึงไม่ได้ ใช้ข้อมูลรอบก่อน ไม่เขียนทับด้วยค่าว่าง (build ล้ม 11 ต.ค.)
-        raise ValueError("ThaiWater ส่งข้อมูลระดับน้ำว่าง")
+        _tw_fail(js, "ระดับน้ำ")
     return out
 
 
@@ -189,7 +209,7 @@ def fetch_rain() -> list[dict]:
         })
     out.sort(key=lambda r: r["rain"], reverse=True)
     if not out:      # ตอบว่าง = ดึงไม่ได้ ใช้ข้อมูลรอบก่อน
-        raise ValueError("ThaiWater ส่งข้อมูลฝนว่าง")
+        _tw_fail(js, "ฝน")
     return out
 
 
@@ -293,7 +313,7 @@ def fetch_main() -> dict:
         return out
 
     if not dams:     # ThaiWater ตอบว่าง = ดึงไม่ได้ ใช้ข้อมูลเขื่อนรอบก่อน (11 ต.ค. ตอบว่างช่วงกลางคืน)
-        raise ValueError("ThaiWater ส่งข้อมูลเขื่อนว่าง")
+        _tw_fail(js, "เขื่อน")
     return {"dams": dams, "forecast": media("pre_rain")[:8], "radar": media("radar")[:12]}
 
 
