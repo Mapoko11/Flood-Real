@@ -385,11 +385,14 @@ def fetch_gistda() -> dict:
     import subprocess
     import sys
     base = os.path.dirname(os.path.abspath(__file__))
-    code = ("import json,sys,sources;"
+    # โปรเซสลูกโหลด config ใหม่ -> บน GitHub ไม่มี config_local.json จึงต้องส่ง key ต่อทาง env (11 ต.ค.)
+    code = ("import json,os,sys;from config import CFG;"
+            "CFG['GISTDA_API_KEY']=os.environ.get('FLOODREAL_GISTDA_KEY','').strip() or CFG.get('GISTDA_API_KEY','');"
+            "import sources;"
             "r=sources._fetch_gistda_inproc();"
             f"sys.stdout.write('\\n{_GISTDA_MARK}'+json.dumps(r)+'\\n');sys.stdout.flush()")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)   # ลดความสำคัญ ไม่แย่ง CPU เครื่อง host
-    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", FLOODREAL_GISTDA_KEY=key)
     pr = subprocess.run([sys.executable, "-c", code], cwd=base, env=env, capture_output=True,
                         text=True, encoding="utf-8", errors="replace",
                         timeout=GISTDA_SUBPROC_TIMEOUT, creationflags=flags)
