@@ -292,6 +292,8 @@ def fetch_main() -> dict:
             })
         return out
 
+    if not dams:     # ThaiWater ตอบว่าง = ดึงไม่ได้ ใช้ข้อมูลเขื่อนรอบก่อน (11 ต.ค. ตอบว่างช่วงกลางคืน)
+        raise ValueError("ThaiWater ส่งข้อมูลเขื่อนว่าง")
     return {"dams": dams, "forecast": media("pre_rain")[:8], "radar": media("radar")[:12]}
 
 
