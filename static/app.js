@@ -551,6 +551,22 @@ function wlTimeFlag(t){
   const diff = (nowTh - at) / 60000;
   return diff < -30 ? "future" : diff > WL_OLD_MIN ? "old" : "";
 }
+/* แจ้งในแท็บเมื่อแหล่งข้อมูลดึงไม่ได้ (เช่น ThaiWater ฐานข้อมูลขัดข้อง 11 ต.ค.) — เดิมเห็นแค่ตอนชี้เมาส์ที่จุดสถานะ */
+function srcNote(k){
+  const s = (DATA.status||{})[k];
+  if(!s || s.ok) return "";
+  const why = String(s.error||"").replace(/^\w+(Error|Exception):\s*/, "").split(": ")[0];
+  const at = s.at ? String(s.at).replace("T"," ").slice(0,16) : "";
+  return `<div class="warn" style="grid-column:1/-1"><b>⚠ ดึงข้อมูล${esc(SRC_NAME[k]||k)}รอบล่าสุดไม่ได้</b>${esc(why)}${at ? ` · ข้อมูลที่แสดงเป็นของ ${esc(at)} น.` : ""}</div>`;
+}
+function putSrcNote(tableSel, k){
+  const t = $(tableSel); if(!t || !t.parentNode) return;
+  const box = t.parentNode.classList.contains("table-wrap") ? t.parentNode : t;   // วางเหนือกรอบตาราง (ไม่เลื่อนไปกับตาราง)
+  const id = tableSel.slice(1) + "SrcNote";
+  let el = document.getElementById(id);
+  if(!el){ el = document.createElement("div"); el.id = id; box.parentNode.insertBefore(el, box); }
+  el.innerHTML = srcNote(k);
+}
 function renderWl(){
   const lv = $("#wlLevel").value;
   const rows = (DATA.waterlevel||[]).filter(w=>match(w,["name","province","amphoe","basin","river"]))
@@ -558,6 +574,7 @@ function renderWl(){
     .map(w=>({w, f: wlTimeFlag(w.time)}))
     .sort((a,b)=>((a.f?1:0)-(b.f?1:0)) || ((b.w.bank_pct??-1)-(a.w.bank_pct??-1)));
   $("#wlCount").textContent = `${rows.length} สถานี`;
+  putSrcNote("#wlTable", "waterlevel");
   $("#wlTable").innerHTML = `<thead><tr><th>สถานี</th><th>จังหวัด / อำเภอ</th><th>ลุ่มน้ำ / แม่น้ำ</th>
     <th class="num">ระดับน้ำ (ม.รทก.)</th><th>% ความจุลำน้ำ</th><th>สถานการณ์</th><th>เวลา</th></tr></thead><tbody>` +
     rows.map(({w, f})=>{
@@ -606,6 +623,7 @@ function renderRain(){
   try{ renderRainNow(); }catch(e){ console.error("renderRainNow", e); }
   const rows = (DATA.rain||[]).filter(r=>match(r,["name","province","amphoe","basin"])).slice(0,500);
   $("#rainCount").textContent = `แสดง ${rows.length} สถานี (เรียงจากฝนมากสุด)`;
+  putSrcNote("#rainTable", "rain");
   $("#rainTable").innerHTML = `<thead><tr><th>#</th><th>สถานี</th><th>จังหวัด / อำเภอ</th><th>ลุ่มน้ำ</th>
     <th class="num">ฝน 24 ชม. (มม.)</th><th>ระดับ</th><th>เวลา</th></tr></thead><tbody>` +
     rows.map((r,i)=>`<tr><td class="muted">${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.province)} / ${esc(r.amphoe)}</td>
@@ -615,8 +633,8 @@ function renderRain(){
 
 function renderDam(){
   const dams = ((DATA.main||{}).dams||[]).filter(d=>match(d,["name","province","basin"]));
-  if(!dams.length){ $("#damBars").innerHTML = `<div class="note">ยังไม่มีข้อมูลเขื่อน</div>`; return; }
-  $("#damBars").innerHTML = dams.map(d=>{
+  if(!dams.length){ $("#damBars").innerHTML = srcNote("main") + `<div class="note">ยังไม่มีข้อมูลเขื่อน</div>`; return; }
+  $("#damBars").innerHTML = srcNote("main") + dams.map(d=>{
     const p = Math.max(0, Math.min(100, d.pct||0)); const c=(DAM[d.level]||DAM[0])[1];
     return `<div class="dam"><div class="t"><b>${esc(d.name)}</b>${pill(DAM,d.level)}</div>
       <div class="bar"><i style="width:${p}%;background:${c}"></i></div>
