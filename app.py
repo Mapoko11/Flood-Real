@@ -282,7 +282,7 @@ def api_refresh():
 
 @app.get("/health")
 def health():
-    st = sources.load_cache().get("status") or {}
+    st = sources.peek_status()      # ไม่อ่าน latest.json (~7 MB) ทุกครั้ง กัน /health ช้า/MemoryError
     return jsonify({"ok": True, "version": VERSION, "worker": _worker_state["running"],
                     "last_run": _worker_state["last_run"],
                     "sources": {k: v.get("ok") for k, v in st.items()}})

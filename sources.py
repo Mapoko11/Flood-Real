@@ -351,7 +351,50 @@ def _minutes_since(ts: str) -> float:
         return 1e9
 
 
+GISTDA_SUBPROCESS = True        # ดึง GISTDA ในโปรเซสแยก -> เสร็จแล้ว RAM คืน Windows หมด (เดิมค้าง ~600 MB)
+GISTDA_SUBPROC_TIMEOUT = 600    # วินาที (ปกติใช้ ~2-7 นาที; เกินนี้ถูกฆ่า) — ลดจาก 1200 เมื่อ 10 ต.ค.
+_GISTDA_MARK = "@@GISTDA_RESULT@@"
+
+
+def _gistda_due(old_all: dict) -> bool:
+    """มีช่วงไหนถึงรอบต้องดึงใหม่ไหม (ไม่มี = ไม่ต้องเปิดโปรเซสแยก)"""
+    for p in GISTDA_PERIODS:
+        old = old_all.get(p) or {}
+        if not (old.get("ok") and old.get("v") == 2 and os.path.exists(gistda_file(p))
+                and _minutes_since(old.get("at")) < GISTDA_EVERY_MINUTES):
+            return True
+    return False
+
+
 def fetch_gistda() -> dict:
+    """ตัวเรียกจาก refresh_all: ถ้าถึงรอบ ให้โปรเซสลูกดึง (ข้อมูลดิบหลายหมื่นรูปอยู่แค่ในลูก)"""
+    key = (CFG.get("GISTDA_API_KEY") or "").strip()
+    if not key:
+        return {"configured": False, "periods": {}}
+    old_all = ((load_cache().get("gistda") or {}).get("periods") or {})
+    if not _gistda_due(old_all):
+        return {"configured": True, "periods": {p: old_all[p] for p in GISTDA_PERIODS}}
+    if not GISTDA_SUBPROCESS:
+        return _fetch_gistda_inproc()
+    import subprocess
+    import sys
+    base = os.path.dirname(os.path.abspath(__file__))
+    code = ("import json,sys,sources;"
+            "r=sources._fetch_gistda_inproc();"
+            f"sys.stdout.write('\\n{_GISTDA_MARK}'+json.dumps(r)+'\\n');sys.stdout.flush()")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)   # ลดความสำคัญ ไม่แย่ง CPU เครื่อง host
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    pr = subprocess.run([sys.executable, "-c", code], cwd=base, env=env, capture_output=True,
+                        text=True, encoding="utf-8", errors="replace",
+                        timeout=GISTDA_SUBPROC_TIMEOUT, creationflags=flags)
+    for line in reversed((pr.stdout or "").splitlines()):
+        if line.startswith(_GISTDA_MARK):
+            return json.loads(line[len(_GISTDA_MARK):])
+    tail = ((pr.stderr or "").strip().splitlines() or ["(ไม่มีข้อความ)"])[-1]
+    raise RuntimeError(f"โปรเซสดึง GISTDA จบด้วย code {pr.returncode}: {tail}"[:300])
+
+
+def _fetch_gistda_inproc() -> dict:
     """ดึงครบ 4 ช่วงเวลา (ชั่วโมงละครั้ง) ช่วงไหนพังใช้ข้อมูลเดิมของช่วงนั้น
     polygon เก็บแยกไฟล์ data/gistda_<period>.json (ไม่ยัดลง latest.json ให้บวม)"""
     key = (CFG.get("GISTDA_API_KEY") or "").strip()
@@ -1434,13 +1477,33 @@ SOURCES = {
 }
 
 
+_CACHE_MEMO = {"key": None, "data": None}
+_cache_memo_lock = threading.Lock()
+
+
 def load_cache() -> dict:
+    """อ่าน cache (latest.json ~7 MB) — จำผลไว้ในหน่วยความจำ แปลงใหม่เฉพาะเมื่อไฟล์เปลี่ยน
+    (เดิมแปลงใหม่ทุกคำขอ รวม /health -> หน่วยความจำเต็ม MemoryError 10 ต.ค.) คืนสำเนาชั้นบน กันผู้เรียกแก้ทับ"""
     try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            d = json.load(f)
-            return d if isinstance(d, dict) else {}
+        st = os.stat(CACHE_FILE)
+        key = (st.st_mtime_ns, st.st_size)
+        with _cache_memo_lock:
+            if _CACHE_MEMO["key"] == key and _CACHE_MEMO["data"] is not None:
+                return dict(_CACHE_MEMO["data"])
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if not isinstance(d, dict):
+                return {}
+            _CACHE_MEMO["key"], _CACHE_MEMO["data"] = key, d
+            return dict(d)
     except (OSError, ValueError):
         return {}
+
+
+def peek_status() -> dict:
+    """สถานะแหล่งข้อมูลจาก cache ที่จำไว้แล้ว (ไม่อ่านไฟล์ใหญ่ — ใช้กับ /health)"""
+    d = _CACHE_MEMO.get("data") or {}
+    return d.get("status") or {}
 
 
 def save_cache(d: dict) -> None:
