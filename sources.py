@@ -161,6 +161,8 @@ def fetch_waterlevel() -> list[dict]:
             "time": str(it.get("waterlevel_datetime") or ""),
             "agency": _th((it.get("agency") or {}).get("agency_shortname")),
         })
+    if not out:      # ThaiWater ตอบรายการว่าง (ไม่ error) -> ถือว่าดึงไม่ได้ ใช้ข้อมูลรอบก่อน ไม่เขียนทับด้วยค่าว่าง (build ล้ม 11 ต.ค.)
+        raise ValueError("ThaiWater ส่งข้อมูลระดับน้ำว่าง")
     return out
 
 
@@ -186,6 +188,8 @@ def fetch_rain() -> list[dict]:
             "time": str(it.get("rainfall_datetime") or ""),
         })
     out.sort(key=lambda r: r["rain"], reverse=True)
+    if not out:      # ตอบว่าง = ดึงไม่ได้ ใช้ข้อมูลรอบก่อน
+        raise ValueError("ThaiWater ส่งข้อมูลฝนว่าง")
     return out
 
 
