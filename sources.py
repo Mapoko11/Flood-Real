@@ -1519,7 +1519,15 @@ def fetch_pm25() -> dict:
     old = load_cache().get("pm25") or {}
     if old.get("items") and _minutes_since(old.get("at")) < PM25_EVERY_MINUTES:
         return old
-    js = _get_json(CFG.get("PM25_URL") or PM25_URL)
+    try:
+        js = _get_json(CFG.get("PM25_URL") or PM25_URL)
+    except Exception as e:  # noqa: BLE001
+        # เซิร์ฟเวอร์ GitHub (Linux) ดึง Air4Thai ไม่ได้ (SSL CERTIFICATE_VERIFY_FAILED 14 ต.ค.)
+        # -> ใช้ชุดที่เครื่องหลักดึงได้แล้วส่งขึ้น Worker (/bma-view?name=pm25)
+        got = _pm25_from_worker()
+        if got is None:
+            raise e
+        return got
     rows = js.get("stations") if isinstance(js, dict) else None
     if not isinstance(rows, list) or not rows:
         raise ValueError("รูปแบบข้อมูล Air4Thai เปลี่ยนไป (ไม่พบ stations)")
@@ -1552,8 +1560,27 @@ def fetch_pm25() -> dict:
     items.sort(key=lambda x: (x["old"], -(x["pm25"] if x["pm25"] is not None else -1)))
     count = {str(k): sum(1 for i in items if i["level"] == k and not i["old"]) for k in range(6)}
     nt, _ = _newest(i["time"] for i in items)
-    return {"configured": True, "at": _now(), "items": items, "count": count, "newest": nt,
-            "source": "http://air4thai.pcd.go.th/webV3/"}
+    res = {"configured": True, "at": _now(), "via": "direct", "items": items, "count": count, "newest": nt,
+           "source": "http://air4thai.pcd.go.th/webV3/"}
+    _bma_view_push("pm25", res)      # ส่งให้เว็บ GitHub ใช้ต่อ (เครื่องหลักเท่านั้นที่มี token) · ล้มเหลวเงียบๆ
+    return res
+
+
+def _pm25_from_worker():
+    """PM2.5 ชุดล่าสุดที่เครื่องหลักส่งขึ้น Worker — ใช้เมื่อดึง Air4Thai ตรงไม่ได้ · คืน None ถ้าไม่มี/เก่าเกิน 2 ชม."""
+    proxy = (CFG.get("BMA_PROXY_URL") or "").strip()
+    if not proxy:
+        return None
+    try:
+        js = _get_json(proxy.rsplit("/", 1)[0] + "/bma-view?name=pm25")
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(js, dict) or not isinstance(js.get("items"), list) or not js["items"]:
+        return None
+    if _minutes_since(js.get("at")) > 120:
+        return None
+    js["via"] = "Worker (เครื่องหลักดึงจาก Air4Thai)"
+    return js
 
 
 SOURCES = {

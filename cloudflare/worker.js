@@ -613,21 +613,25 @@ async function bmaPush(request, env, url, cors) {
 }
 
 // ข้อมูลที่ host ประมวลผลแล้ว (รูปแบบเดียวกับที่หน้าเว็บใช้) — ให้หน้าเว็บ GitHub ดึงสดทุก 5 นาที
+// ชุดข้อมูลที่เครื่องหลักส่งขึ้นมาเก็บ (KV "bma:view-<name>" อายุ 2 วัน): flood/canal = กทม., pm25 = ฝุ่น Air4Thai
+const VIEW_NAMES = ["flood", "canal", "pm25"];
+
 async function bmaViewPush(request, env, url, cors) {
   const tok = String(env.BMA_PUSH_TOKEN || "");
   const got = request.headers.get("X-Push-Token") || "";
   if (tok.length < 16 || got !== tok) return json({ ok: false, error: "ไม่อนุญาต" }, 403, cors);
-  const name = url.searchParams.get("name") === "canal" ? "canal" : "flood";
+  const name = VIEW_NAMES.includes(url.searchParams.get("name")) ? url.searchParams.get("name") : "flood";
   const t = await request.text();
   if (t.length > 1e6) return json({ ok: false, error: "ใหญ่เกิน" }, 413, cors);
   let j; try { j = JSON.parse(t); } catch (e) { return json({ ok: false, error: "ไม่ใช่ JSON" }, 400, cors); }
-  if (!j || !Array.isArray(j.points) || !j.points.length) return json({ ok: false, error: "รูปแบบไม่ถูก" }, 400, cors);
+  const arr = name === "pm25" ? j && j.items : j && j.points;   // pm25 = รายการสถานี (items), กทม. = points
+  if (!Array.isArray(arr) || !arr.length) return json({ ok: false, error: "รูปแบบไม่ถูก" }, 400, cors);
   await env.COUNTER.put("bma:view-" + name, t, { expirationTtl: 2 * 86400 });
   return json({ ok: true, name, bytes: t.length }, 200, cors);
 }
 
 async function bmaView(env, url, cors) {
-  const name = url.searchParams.get("name") === "canal" ? "canal" : "flood";
+  const name = VIEW_NAMES.includes(url.searchParams.get("name")) ? url.searchParams.get("name") : "flood";
   const t = await env.COUNTER.get("bma:view-" + name);
   if (!t) return json({ ok: false, error: "ยังไม่มีข้อมูล" }, 404, cors);
   return new Response(t, { headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=120" } });
