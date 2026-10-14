@@ -1490,10 +1490,77 @@ def fetch_floodboard() -> dict:
             "source": "https://floodboard.org/"}
 
 
+# ---------------------------------------------------------------- PM2.5 (กรมควบคุมมลพิษ Air4Thai)
+PM25_URL = "http://air4thai.pcd.go.th/services/getNewAQI_JSON.php"
+PM25_PROVINCES = {"กรุงเทพ": "กรุงเทพมหานคร", "นนทบุรี": "นนทบุรี", "เชียงใหม่": "เชียงใหม่"}
+PM25_EVERY_MINUTES = 30      # สถานีอัปเดตรายชั่วโมง ดึงครึ่งชั่วโมงครั้งพอ
+PM25_OLD_MINUTES = 180       # เวลาวัดเก่ากว่านี้ = สถานีค้าง (ไม่เตือน/ไม่คิดค่าสูงสุด เรียงไว้ท้าย)
+
+
+def pm25_level(v) -> int:
+    """เกณฑ์ PM2.5 เฉลี่ย 24 ชม. ของไทย (µg/m³): <=15 ดีมาก, <=25 ดี, <=37.5 ปานกลาง, <=75 เริ่มมีผล, >75 มีผลต่อสุขภาพ"""
+    if v is None:
+        return 0
+    if v <= 15:
+        return 1
+    if v <= 25:
+        return 2
+    if v <= 37.5:
+        return 3
+    if v <= 75:
+        return 4
+    return 5
+
+
+def fetch_pm25() -> dict:
+    """PM2.5 สถานีกรมควบคุมมลพิษ เฉพาะ กทม. / นนทบุรี / เชียงใหม่"""
+    if not CFG.get("PM25_ENABLED", True):
+        return {"configured": False, "items": []}
+    old = load_cache().get("pm25") or {}
+    if old.get("items") and _minutes_since(old.get("at")) < PM25_EVERY_MINUTES:
+        return old
+    js = _get_json(CFG.get("PM25_URL") or PM25_URL)
+    rows = js.get("stations") if isinstance(js, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("รูปแบบข้อมูล Air4Thai เปลี่ยนไป (ไม่พบ stations)")
+    items = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        area = str(r.get("areaTH") or "").strip()
+        prov = next((v for k, v in PM25_PROVINCES.items() if k in area), None)
+        if not prov:
+            continue
+        last = r.get("AQILast") or {}
+        pm = last.get("PM25") or {}
+        val, aqi = _num(pm.get("value")), _num(pm.get("aqi"))
+        val = None if val is None or val < 0 else val          # -1 = สถานีไม่มีค่า
+        aqi = None if aqi is None or aqi < 0 else aqi
+        d, t = str(last.get("date") or ""), str(last.get("time") or "")
+        tm = f"{d}T{t[:5]}:00" if d and t else ""
+        age = _age_min(tm) if tm else None
+        items.append({
+            "id": str(r.get("stationID") or "")[:20],
+            "name": str(r.get("nameTH") or "").strip()[:120],
+            "area": area[:160], "province": prov,
+            "lat": _num(r.get("lat")), "lon": _num(r.get("long")),
+            "pm25": val, "aqi": aqi, "level": pm25_level(val),
+            "time": tm, "old": age is None or age > PM25_OLD_MINUTES,
+        })
+    if not items:
+        raise ValueError("ไม่พบสถานี PM2.5 ในพื้นที่ที่เลือก")
+    items.sort(key=lambda x: (x["old"], -(x["pm25"] if x["pm25"] is not None else -1)))
+    count = {str(k): sum(1 for i in items if i["level"] == k and not i["old"]) for k in range(6)}
+    nt, _ = _newest(i["time"] for i in items)
+    return {"configured": True, "at": _now(), "items": items, "count": count, "newest": nt,
+            "source": "http://air4thai.pcd.go.th/webV3/"}
+
+
 SOURCES = {
     "waterlevel": fetch_waterlevel,
     "rain": fetch_rain,
     "rain_now": fetch_rain_now,
+    "pm25": fetch_pm25,
     "main": fetch_main,
     "gistda": fetch_gistda,
     "tmd": fetch_tmd,

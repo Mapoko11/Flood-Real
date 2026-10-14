@@ -34,6 +34,7 @@
   <button data-tab="wl">ระดับน้ำ</button>
   <button data-tab="rain">ฝน 24 ชม.</button>
   <button data-tab="dam">เขื่อน</button>
+  <button data-tab="pm">😷 PM2.5</button>
   <button data-tab="river">🌊 สายน้ำ</button>
   <button data-tab="sat">น้ำท่วม (ดาวเทียม)</button>
   <button data-tab="bma">🚗 น้ำท่วม กทม./นนท์</button>
@@ -118,6 +119,16 @@
 
   <section class="panel" id="tab-dam">
     <div id="damBars" class="dam-bars"></div>
+  </section>
+
+  <section class="panel" id="tab-pm">
+    <h3 class="rv-h3">😷 ฝุ่น PM2.5 (กทม. / นนทบุรี / เชียงใหม่)</h3>
+    <div class="filters">
+      <select id="pmProv"><option value="">ทุกจังหวัด</option><option>กรุงเทพมหานคร</option><option>นนทบุรี</option><option>เชียงใหม่</option></select>
+      <span class="muted" id="pmInfo"></span>
+    </div>
+    <div class="table-wrap"><table id="pmTable"></table></div>
+    <div class="note" style="margin-top:6px">ข้อมูล: กรมควบคุมมลพิษ (<a href="http://air4thai.pcd.go.th/webV3/" target="_blank" rel="noopener noreferrer">Air4Thai</a>) · ค่ารายชั่วโมงล่าสุดของแต่ละสถานี · สีเทียบเกณฑ์ PM2.5 ของไทย (µg/m³): ≤15 ดีมาก · ≤25 ดี · ≤37.5 ปานกลาง · ≤75 เริ่มมีผลต่อสุขภาพ · &gt;75 มีผลต่อสุขภาพ (เกณฑ์ทางการใช้ค่าเฉลี่ย 24 ชม.)</div>
   </section>
 
   <section class="panel" id="tab-river">

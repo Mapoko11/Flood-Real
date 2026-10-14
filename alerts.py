@@ -84,7 +84,15 @@ def find_hits(data: dict) -> list[dict]:
                 "key": f"road:{pnt.get('code')}", "kind": "road", "score": cm,
                 "text": f"🚗 {pnt.get('name')} (เขต{pnt.get('district')}) น้ำท่วมถนน {_fmt(cm, 0)} ซม.",
             })
-    order = {"wl": 0, "road": 1, "dam": 2, "rain": 3}
+    pm_lim = float(CFG.get("ALERT_PM25", 75))
+    for it in (data.get("pm25") or {}).get("items") or []:
+        v = it.get("pm25")
+        if v is not None and v > pm_lim and not it.get("old"):   # สถานีค้าง (ค่าเก่า) ไม่เตือน
+            hits.append({
+                "key": f"pm25:{it.get('id')}", "kind": "pm25", "score": v,
+                "text": f"😷 PM2.5 {it.get('name')} ({it.get('province')}) {_fmt(v)} µg/m³ — มีผลต่อสุขภาพ",
+            })
+    order = {"wl": 0, "road": 1, "dam": 2, "pm25": 3, "rain": 4}
     hits.sort(key=lambda h: (order[h["kind"]], -h["score"]))
     return hits
 
@@ -107,6 +115,8 @@ def summary_text(data: dict) -> str:
 def check_and_notify(data: dict) -> dict:
     """ตรวจเกณฑ์ + ส่งเตือน (เฉพาะรายการใหม่หรือครบรอบเตือนซ้ำ)"""
     kinds = set(CFG.get("ALERT_KINDS") or ["wl", "dam", "rain"])
+    if CFG.get("ALERT_PM25_ENABLED", True):      # PM2.5 เกินเกณฑ์ (ค่าเริ่มต้น > 75 µg/m³ = สีแดง)
+        kinds.add("pm25")
     hits = [h for h in find_hits(data) if h["kind"] in kinds]
     result = {"hits": len(hits), "sent": 0, "error": ""}
     if not CFG["ALERT_ENABLED"] or not hits:
@@ -146,7 +156,9 @@ def check_and_notify(data: dict) -> dict:
         lines.append(f"...และอีก {len(new) - cap} รายการ (ดูในเว็บ)")
     body = "\n".join(lines) + "\n\n" + summary_text(data)
     try:
-        b.report(f"⚠️ Flood real — เตือนน้ำ {len(new)} จุด", body, expires_minutes=180)
+        kinds_new = {h["kind"] for h in new}
+        title = "เตือนฝุ่น PM2.5" if kinds_new == {"pm25"} else ("เตือนน้ำ/ฝุ่น" if "pm25" in kinds_new else "เตือนน้ำ")
+        b.report(f"⚠️ Flood real — {title} {len(new)} จุด", body, expires_minutes=180)
     except Exception as e:  # noqa: BLE001
         result["error"] = f"ส่งเข้า bus ไม่ได้: {e}"
         return result

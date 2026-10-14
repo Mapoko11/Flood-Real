@@ -57,7 +57,8 @@ async function getRadar(){
 const WL = {1:["น้อยวิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["น้ำมาก","#3b82f6"],5:["ล้นตลิ่ง","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
 const RAIN = {0:["ไม่มีฝน","#64748b"],1:["เล็กน้อย","#a5f3fc"],2:["ปานกลาง","#38bdf8"],3:["หนัก","#22c55e"],4:["หนักมาก","#f97316"]};
 const DAM = {1:["วิกฤต","#db802b"],2:["น้อย","#ffc000"],3:["ปกติ","#00b050"],4:["มาก","#3b82f6"],5:["เกินความจุ","#ef4444"],0:["ไม่มีข้อมูล","#64748b"]};
-const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",rain_now:"ฝนสด กทม./ปริมณฑล",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",bma_seg:"เส้นถนน OSM",cctv:"กล้อง CCTV",floodboard:"Floodboard"};
+const PM = {0:["ไม่มีข้อมูล","#64748b"],1:["ดีมาก","#0ea5e9"],2:["ดี","#22c55e"],3:["ปานกลาง","#ca8a04"],4:["เริ่มมีผล","#f97316"],5:["มีผลต่อสุขภาพ","#ef4444"]};
+const SRC_NAME = {waterlevel:"ระดับน้ำ",rain:"ฝน",rain_now:"ฝนสด กทม./ปริมณฑล",pm25:"PM2.5",main:"เขื่อน/คาดการณ์",gistda:"GISTDA",tmd:"กรมอุตุฯ",traffy:"Traffy",bma:"ถนน กทม.",bma_canal:"คลอง กทม.",bma_seg:"เส้นถนน OSM",cctv:"กล้อง CCTV",floodboard:"Floodboard"};
 const CANAL = {critical:["ถึงระดับวิกฤต","#ef4444"],warning:["เฝ้าระวัง","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"]};
 const BMA = {flood:["น้ำท่วม","#ef4444"],minor:["ท่วมขังเล็กน้อย","#f59e0b"],normal:["ปกติ","#22c55e"],down:["ขัดข้อง","#64748b"],unknown:["ไม่ทราบ","#64748b"]};
 function bmaWet(p){ return p.state==="flood" || p.state==="minor"; }
@@ -180,7 +181,7 @@ function renderAll(){
   if(!DATA) return;
   try{ prepSat(); }catch(e){ console.error(e); }
   $("#updated").textContent = DATA.updated_at ? "อัปเดต " + DATA.updated_at.replace("T"," ") : "ยังไม่มีข้อมูล (รอรอบแรก)";
-  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderSat, renderTraffy, renderBma, renderCanal, renderNb, renderCam, renderFc]){
+  for(const f of [renderKpis, renderStatus, renderMap, renderWl, renderRain, renderDam, renderPm, renderSat, renderTraffy, renderBma, renderCanal, renderNb, renderCam, renderFc]){
     try{ f(); }catch(e){ console.error(f.name, e); }   // ส่วนไหนพัง ส่วนอื่นยังแสดง
   }
 }
@@ -198,6 +199,8 @@ function renderKpis(){
     ["red", (DATA.bma&&DATA.bma.count) ? (DATA.bma.count.flood||0)+(DATA.bma.count.minor||0) : "–", "ถนน กทม. น้ำท่วม (จุดวัด)"],
     ["red", ((DATA.traffy||{}).items||[]).filter(tfOpen).length, `แจ้งปัญหาค้าง (Traffy ${fmt((DATA.traffy||{}).hours||72,0)} ชม.)`],
   ];
+  const pmv = ((DATA.pm25||{}).items||[]).filter(x=>!x.old).map(x=>x.pm25).filter(v=>v!=null);
+  if(pmv.length){ const mx = Math.max(...pmv); k.push([mx>75?"red":(mx>37.5?"amber":""), fmt(mx,0), "PM2.5 สูงสุด µg/m³ (กทม./นนท์/เชียงใหม่)"]); }
   $("#kpis").innerHTML = k.map(([c,v,l])=>`<div class="kpi ${c}"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join("");
 }
 
@@ -630,6 +633,23 @@ function renderRain(){
       <td>${esc(r.basin)}</td><td class="num"><b>${fmt(r.rain)}</b></td><td>${pill(RAIN,r.level)}</td>
       <td class="muted">${esc(r.time)}</td></tr>`).join("") + "</tbody>";
 }
+
+/* ฝุ่น PM2.5 (กรมควบคุมมลพิษ) — กทม./นนทบุรี/เชียงใหม่ */
+function renderPm(){
+  const box = $("#pmTable"); if(!box) return;
+  const b = DATA.pm25||{}, st = (DATA.status||{}).pm25, all = b.items||[];
+  if(!all.length){ $("#pmInfo").textContent = st&&!st.ok ? "ยังดึงข้อมูล PM2.5 ไม่ได้: "+st.error : "ยังไม่มีข้อมูล PM2.5 (รอรอบแรก)"; box.innerHTML = ""; return; }
+  const pv = $("#pmProv").value;
+  const rows = all.filter(x=>!pv || x.province===pv).filter(x=>match(x,["name","area","province"]));
+  const n5 = rows.filter(x=>x.level===5 && !x.old).length, n4 = rows.filter(x=>x.level===4 && !x.old).length;
+  $("#pmInfo").innerHTML = `เวลาวัดล่าสุด <b>${esc(String(b.newest||"–").replace("T"," ").slice(0,16))}</b> · ${rows.length} สถานี · เกิน 75: <b style="color:${PM[5][1]}">${n5}</b> · 37.6–75: <b style="color:${PM[4][1]}">${n4}</b>`;
+  putSrcNote("#pmTable", "pm25");
+  box.innerHTML = `<thead><tr><th>#</th><th>สถานี</th><th>พื้นที่</th><th class="num">PM2.5 (µg/m³)</th><th class="num">AQI</th><th>ระดับ</th><th>เวลา</th></tr></thead><tbody>` +
+    rows.map((x,i)=>`<tr${x.old?' style="opacity:.6"':""}><td class="muted">${i+1}</td><td>${esc(x.name)}</td><td>${esc(x.area)}</td>
+      <td class="num"><b>${x.pm25==null ? "–" : fmt(x.pm25,1)}</b></td><td class="num">${x.aqi==null ? "–" : fmt(x.aqi,0)}</td>
+      <td>${pill(PM,x.level)}</td><td class="muted">${esc(String(x.time||"").replace("T"," ").slice(5,16))}${x.old?` <span class="pill" style="background:#64748b" title="สถานีไม่ส่งค่าใหม่เกิน 3 ชั่วโมง">ข้อมูลเก่า</span>`:""}</td></tr>`).join("") + "</tbody>";
+}
+{ const el = $("#pmProv"); if(el) el.addEventListener("change", ()=>{ try{ renderPm(); }catch(e){ console.error(e); } }); }
 
 function renderDam(){
   const dams = ((DATA.main||{}).dams||[]).filter(d=>match(d,["name","province","basin"]));
