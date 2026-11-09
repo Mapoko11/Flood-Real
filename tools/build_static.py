@@ -22,7 +22,6 @@ if key:
 EVERY = os.environ.get("SITE_EVERY_MINUTES", "30")
 
 sources.CCTV_HEALTH_SYNC = True   # ตรวจกล้องเสียให้เสร็จระหว่าง build (วันละครั้ง)
-sources.GISTDA_SUBPROCESS = False  # GitHub: ดึง GISTDA ในโปรเซสเดียว ไม่จำกัด 10 นาที (โปรเซสแยกถูกฆ่า TimeoutExpired 5 พ.ย.; เครื่อง GitHub สร้างใหม่ทุกรอบ ไม่ต้องห่วงแรม)
 import app as webapp  # noqa: E402  (import หลังตั้ง key)
 
 SITE = os.path.join(ROOT, "site")
