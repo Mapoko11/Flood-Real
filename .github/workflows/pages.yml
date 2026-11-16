@@ -1,4 +1,4 @@
-# สร้างเว็บ Flood real แบบ static แล้ว deploy ขึ้น GitHub Pages ทุก 15 นาที
+# สร้างเว็บ Flood real แบบ static แล้ว deploy ขึ้น GitHub Pages + Cloudflare Pages ทุก 15 นาที
 name: Build & deploy site
 
 on:
@@ -22,6 +22,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      HAS_CF: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}   # ยังไม่ใส่ secret = ข้ามขั้น Cloudflare (ไม่พัง)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,6 +40,16 @@ jobs:
           LONGDO_WEB_KEY: ${{ secrets.LONGDO_API_KEY }}
           TZ: Asia/Bangkok          # เวลาไทย (เว็บ + ช่วง 72 ชม. ของ Traffy)
         run: python tools/build_static.py
+      # ส่งเว็บชุดเดียวกันขึ้น Cloudflare Pages ด้วย (ทดสอบคู่กับ GitHub Pages ซึ่ง deploy ไม่ขึ้นเว็บตั้งแต่ ~5 พ.ย. 2569)
+      # ล้มเหลว = ไม่กระทบขั้น GitHub Pages (continue-on-error)
+      - name: Deploy to Cloudflare Pages
+        if: env.HAS_CF == 'true'
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name=flood-real --branch=main --commit-dirty=true
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

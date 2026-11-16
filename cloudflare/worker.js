@@ -45,9 +45,12 @@ export default {
 
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const allowed = (env.ALLOWED_ORIGIN || "https://mapoko11.github.io").replace(/\/$/, "");
+    // เว็บที่อนุญาต: github.io + Cloudflare Pages (ย้ายเว็บ พ.ย. 2569) · ตั้ง Variable ALLOWED_ORIGIN แบบคั่นด้วย , ได้
+    const allowList = (env.ALLOWED_ORIGIN || "https://mapoko11.github.io,https://flood-real.pages.dev")
+      .split(",").map(s => s.trim().replace(/\/$/, "")).filter(Boolean);
     const origin = request.headers.get("Origin") || "";
     const referer = request.headers.get("Referer") || "";
+    const allowed = allowList.find(a => origin === a || referer.startsWith(a + "/")) || allowList[0];
     const cors = {
       "Access-Control-Allow-Origin": allowed,
       "Access-Control-Allow-Methods": "GET, OPTIONS",
