@@ -48,6 +48,33 @@ jobs:
         run: |
           echo "token length: ${#CF_TOKEN}, account id length: ${#CF_ACC}"
           if [ -n "$CF_TOKEN" ] && [ -n "$CF_ACC" ]; then echo "has=true" >> "$GITHUB_OUTPUT"; fi
+      # Cloudflare Pages รับไฟล์ได้ไม่เกิน 25 MiB ต่อไฟล์ -> ทำสำเนา site_cf แล้วย่อไฟล์ใหญ่ (ปัดพิกัดเหลือ 4 ตำแหน่ง ~11 ม.)
+      # ถ้ายังใหญ่เกินจึงตัดไฟล์นั้นออกเฉพาะฝั่ง Cloudflare (GitHub Pages ใช้ไฟล์เต็มเหมือนเดิม)
+      - name: Prepare Cloudflare copy
+        if: steps.cf.outputs.has == 'true'
+        continue-on-error: true
+        shell: python
+        run: |
+          import json, os, re, shutil
+          LIMIT = 24 * 1024 * 1024
+          shutil.rmtree("site_cf", ignore_errors=True)
+          shutil.copytree("site", "site_cf")
+          rnd = lambda m: repr(round(float(m.group(0)), 4))
+          for root, _, files in os.walk("site_cf"):
+              for n in files:
+                  f = os.path.join(root, n)
+                  size = os.path.getsize(f)
+                  if size <= LIMIT:
+                      continue
+                  if n.endswith(".json"):
+                      txt = open(f, encoding="utf-8").read()
+                      txt = re.sub(r"-?\d+\.\d{5,}", rnd, txt)
+                      open(f, "w", encoding="utf-8").write(txt)
+                  new = os.path.getsize(f)
+                  print(f"{f}: {size/1048576:.1f} MiB -> {new/1048576:.1f} MiB")
+                  if new > LIMIT:
+                      os.remove(f)
+                      print(f"  still too big, removed from Cloudflare copy")
       - name: Deploy to Cloudflare Pages
         if: steps.cf.outputs.has == 'true'
         continue-on-error: true
@@ -55,7 +82,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy site --project-name=flood-real --branch=main --commit-dirty=true
+          command: pages deploy site_cf --project-name=flood-real --branch=main --commit-dirty=true
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
